@@ -6,7 +6,7 @@ SRC="$ROOT/FEX"
 BUILD="$SRC/build-ios"
 OUT="$BUILD/FEXCore/Source/libFEXCore.a"
 
-if [[ -f "$OUT" ]]; then
+if [[ -f "$OUT" && -f "$BUILD/FEXCore/Source/libJemallocLibs.a" ]]; then
   echo "FEX iOS: cached"
   exit 0
 fi
@@ -54,5 +54,8 @@ cmake -S "$SRC" -B "$BUILD" -G Ninja \
   -DTUNE_CPU=generic \
   -DTUNE_ARCH=generic
 
-cmake --build "$BUILD" --target FEXCore FEXCore_Base --parallel "$JOBS"
-[[ -f "$OUT" ]] || { echo "ERROR: FEX build did not produce $OUT" >&2; exit 1; }
+# The Xcode project links these archives from FEX/build-ios.
+cmake --build "$BUILD" --target FEXCore FEXCore_Base JemallocLibs --parallel "$JOBS"
+for lib in "$OUT" "$BUILD/FEXCore/Source/libJemallocLibs.a"; do
+  [[ -f "$lib" ]] || { echo "ERROR: FEX build did not produce $lib" >&2; exit 1; }
+done
