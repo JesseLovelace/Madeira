@@ -11,10 +11,11 @@ if [[ -f "$OUT" && -f "$BUILD/FEXCore/Source/libJemallocLibs.a" ]]; then
   exit 0
 fi
 
-# -DFEX_IOS_HOST=1 selects the iOS host-feature stubs inside this FEX fork
-# (HostFeatures, InvalidationTracker, logging). A build without it compiles
-# but misdetects the host at runtime, so it is required here, not optional.
-# The remaining options mirror build/fex-ios/build.sh.
+# Options mirror build/fex-ios/build.sh. Do not define FEX_IOS_HOST here: in
+# this FEX fork it selects the code for FEX running as a Windows PE under Wine
+# on iOS (xtajit.dll, xtajit64.dll), which calls Win32 APIs and symbols that
+# only those modules define. The native library the app links uses __APPLE__.
+
 # The pinned FEX logs a Win32 VirtualQuery region dump from iOS-host code
 # (IosLogUnimplementedCASPAL), which does not compile against the iOS SDK.
 # Keep the log line, drop the region dump.
@@ -46,6 +47,21 @@ if old in s:
     p.write_text(s.replace(old, old.replace("  IOS_RPM_GUARD();\n", ""), 1))
 PY
 
+# Core.cpp drains a diagnostic snapshot from FEX's rpmalloc fork, which is not
+# linked with ENABLE_FEX_ALLOCATOR=OFF. Give it a weak "nothing to report" stub.
+python3 - "$SRC/FEXCore/Source/Interface/Core/Core.cpp" <<'PY'
+import sys
+from pathlib import Path
+p = Path(sys.argv[1])
+s = p.read_text()
+old = "int rpm_cas_snapshot_take(struct rpm_cas_snapshot* out);\n}\n"
+stub = "__attribute__((weak)) int rpm_cas_snapshot_take(struct rpm_cas_snapshot*) { return 0; }\n"
+if stub not in s:
+    if old not in s:
+        raise SystemExit(f"expected rpm_cas_snapshot_take declaration not found in {p}")
+    p.write_text(s.replace(old, old[:-2] + stub + "}\n", 1))
+PY
+
 cmake -S "$SRC" -B "$BUILD" -G Ninja \
   -DCMAKE_SYSTEM_NAME=iOS \
   -DCMAKE_SYSTEM_PROCESSOR=arm64 \
@@ -53,8 +69,6 @@ cmake -S "$SRC" -B "$BUILD" -G Ninja \
   -DCMAKE_OSX_ARCHITECTURES=arm64 \
   -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_C_FLAGS=-DFEX_IOS_HOST=1 \
-  -DCMAKE_CXX_FLAGS=-DFEX_IOS_HOST=1 \
   -DBUILD_TESTING=OFF \
   -DBUILD_FEX_LINUX_TESTS=OFF \
   -DBUILD_THUNKS=OFF \
