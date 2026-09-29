@@ -9,6 +9,23 @@ SRC="$ROOT/research/dxmt/src/airconv/shaders"
 OUT="$ROOT/build/dxmt-ios/shader-headers"
 SHADERS=(air_msad air_samplepos air_tessellation)
 
+# Metal toolchain 32023 (Xcode 27) gave __metal_atomic_fetch_add_explicit a fifth
+# memory-flags argument. Pass it when the toolchain defines it.
+python3 - "$SRC/air_tessellation.metal" <<'PY'
+import sys
+from pathlib import Path
+p = Path(sys.argv[1])
+s = p.read_text()
+old = "  return __metal_atomic_fetch_add_explicit(out_count, 1, int(memory_order_relaxed), __METAL_MEMORY_SCOPE_THREADGROUP__);\n"
+if "__METAL_MEMORY_FLAGS_NONE__" not in s:
+    if old not in s:
+        raise SystemExit(f"expected atomic call not found in {p}")
+    new = ("#ifdef __METAL_MEMORY_FLAGS_NONE__\n"
+           + old.replace("__);", "__, __METAL_MEMORY_FLAGS_NONE__);")
+           + "#else\n" + old + "#endif\n")
+    p.write_text(s.replace(old, new, 1))
+PY
+
 for name in "${SHADERS[@]}"; do
   if [[ -f "$OUT/$name.h" && -f "$OUT/$name.air" ]]; then
     echo "shader $name: cached"
