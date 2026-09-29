@@ -39,11 +39,29 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 7zz x -y "$EXE" -o"$TMP/redist" >/dev/null
 
+# 7-Zip 26 extracts only the Burn UX container, not the attached one that holds
+# the CABs, so also carve every embedded CAB out of the EXE by its MSCF header.
+python3 - "$EXE" "$TMP/redist" <<'PYCAB'
+import struct, sys
+from pathlib import Path
+data = Path(sys.argv[1]).read_bytes()
+i = 0
+while (i := data.find(b"MSCF\0\0\0\0", i)) >= 0:
+    size = struct.unpack_from("<I", data, i + 8)[0]
+    Path(sys.argv[2], f"carved-{i:x}.cab").write_bytes(data[i:i + size])
+    i += 8
+PYCAB
+# The attached container is itself a CAB whose members (a0, a1, ...) are the
+# MSIs and payload CABs, with no file extensions.
+for cab in "$TMP"/redist/carved-*.cab; do
+  [[ -e "$cab" ]] && 7zz x -y "$cab" -o"$TMP/redist/${cab##*/}.d" >/dev/null || true
+done
+
 # The current Microsoft x64 package can also contain ARM64 payloads. Extract all
 # CABs, then select only PE32+ AMD64 (Machine 0x8664) DLLs by reading each PE
 # header. This keeps the build correct even if Microsoft changes CAB ordering.
 CABS=()
-while IFS= read -r cab; do CABS+=("$cab"); done < <(find "$TMP/redist" -type f -iname '*.cab' | sort)
+while IFS= read -r cab; do CABS+=("$cab"); done < <(find "$TMP/redist" -type f -exec sh -c '[ "$(head -c 4 "$1")" = MSCF ]' _ {} \; -print | sort)
 (( ${#CABS[@]} > 0 )) || { echo "ERROR: could not locate CAB payloads inside $EXE" >&2; exit 1; }
 
 mkdir -p "$TMP/cabs"
@@ -81,7 +99,7 @@ for dll in "${DLLS[@]}"; do
       src="$candidate"
       break
     fi
-  done < <(find "$TMP/cabs" -type f -iname "$dll" | sort)
+  done < <(find "$TMP/cabs" -type f \( -iname "$dll" -o -iname "${dll}_*" \) | sort)
   [[ -n "$src" ]] || { echo "ERROR: x86_64 $dll not found in Microsoft redistributable" >&2; exit 1; }
   cp "$src" "$DEST/$dll"
 done
