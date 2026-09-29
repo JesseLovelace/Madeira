@@ -14,4 +14,4 @@ if [[ ! -d "$SRC/.git" ]]; then
   git clone --depth 1 --branch VER-2-13-3 https://github.com/freetype/freetype.git "$SRC"
 fi
 
-"$ROOT/build/freetype-ios/build.sh"
+bash "$ROOT/build/freetype-ios/build.sh"

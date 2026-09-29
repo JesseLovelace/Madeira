@@ -15,6 +15,24 @@ fi
 # (HostFeatures, InvalidationTracker, logging). A build without it compiles
 # but misdetects the host at runtime, so it is required here, not optional.
 # The remaining options mirror build/fex-ios/build.sh.
+# The pinned FEX logs a Win32 VirtualQuery region dump from iOS-host code
+# (IosLogUnimplementedCASPAL), which does not compile against the iOS SDK.
+# Keep the log line, drop the region dump.
+python3 - "$SRC/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp" <<'PY'
+import re, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+s = p.read_text()
+if "MEMORY_BASIC_INFORMATION mbi" in s:
+    s, n = re.subn(r"  MEMORY_BASIC_INFORMATION mbi \{\};.*?mbi\.State\);\n",
+                   '  LogMan::Msg::EFmt("[caspal128] MISALIGNED-UNSUPPORTED Size={} addrReg=x{} addr={:#x} misalign={}",\n'
+                   '                    Size, AddressReg, GPRs[AddressReg], GPRs[AddressReg] & 15);\n',
+                   s, count=1, flags=re.S)
+    if n != 1:
+        raise SystemExit(f"expected VirtualQuery block not found in {p}")
+    p.write_text(s)
+PY
+
 cmake -S "$SRC" -B "$BUILD" -G Ninja \
   -DCMAKE_SYSTEM_NAME=iOS \
   -DCMAKE_SYSTEM_PROCESSOR=arm64 \

@@ -18,7 +18,7 @@ if [[ ! -d "$SRC/.git" ]]; then
 fi
 
 # Apple ld does not accept --gc-sections. DXMT's documented iOS build requires
-# AddLLVM.cmake to treat iOS like Darwin and use -dead_strip.
+# AddLLVM.cmake to treat iOS like Darwin and use -dead_strip in every check, not only the first.
 python3 - "$SRC/llvm/cmake/modules/AddLLVM.cmake" <<'PY'
 from pathlib import Path
 import sys
@@ -28,7 +28,7 @@ if 'MATCHES "Darwin|iOS"' not in s:
     old = 'MATCHES "Darwin"'
     if old not in s:
         raise SystemExit(f"expected pattern not found in {p}")
-    p.write_text(s.replace(old, 'MATCHES "Darwin|iOS"', 1))
+    p.write_text(s.replace(old, 'MATCHES "Darwin|iOS"'))
 PY
 
 if [[ ! -x "$HOST/bin/llvm-tblgen" ]]; then

@@ -8,10 +8,11 @@ on:
 # LLVM and FEX are the slow stages (hours on a hosted runner), so they build in
 # parallel jobs whose trimmed outputs are cached; the app job restores them and
 # runs scripts/build-ipa.sh, which skips any stage whose output already exists.
+# xcode-27: the ntdll unix side uses iOS 27 SDK fields (rusage_info_v6.ri_page_wait_time_mach).
 
 jobs:
   llvm:
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
@@ -23,13 +24,14 @@ jobs:
             toolchains/llvm-ios-build/lib/*.a
             toolchains/llvm-ios-build/include
             toolchains/llvm-project/llvm/include
-      - if: steps.cache.outputs.cache-hit != 'true'
+      - name: Build LLVM for iOS
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           brew install ninja || true
           scripts/build/build-llvm-ios.sh
 
   fex:
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 360
     outputs:
       key: ${{ steps.key.outputs.key }}
@@ -44,7 +46,8 @@ jobs:
           path: |
             FEX/build-ios
             !FEX/build-ios/**/*.o
-      - if: steps.cache.outputs.cache-hit != 'true'
+      - name: Build FEX for iOS
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           brew install ninja || true
           git submodule update --init --recursive --depth 1 FEX
@@ -52,7 +55,7 @@ jobs:
 
   app:
     needs: [llvm, fex]
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
@@ -73,7 +76,8 @@ jobs:
           path: |
             FEX/build-ios
             !FEX/build-ios/**/*.o
-      - run: scripts/build-ipa.sh
+      - name: Build IPA
+        run: scripts/build-ipa.sh
       - uses: actions/upload-artifact@v4
         with:
           name: Madeira-ipa
