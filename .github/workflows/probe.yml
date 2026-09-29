@@ -29,3 +29,5 @@ jobs:
           scripts/build/build-shader-headers.sh
           scripts/build/prepare-vcruntime.sh
           build/stage-licenses.sh
+      - if: failure()
+        run: find build -name '*.err' -size +0 | while read -r f; do echo "== $f"; head -60 "$f"; done
