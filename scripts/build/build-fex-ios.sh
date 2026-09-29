@@ -33,6 +33,19 @@ if "MEMORY_BASIC_INFORMATION mbi" in s:
     p.write_text(s)
 PY
 
+# AllocatorHooks.cpp (JemallocLibs) uses IOS_RPM_GUARD() in its
+# ENABLE_FEX_ALLOCATOR=OFF branch, but only defines it when the allocator is
+# on. With the allocator off the guard is a no-op, so drop that use.
+python3 - "$SRC/FEXCore/Source/Utils/AllocatorHooks.cpp" <<'PY'
+import sys
+from pathlib import Path
+p = Path(sys.argv[1])
+s = p.read_text()
+old = "size_t malloc_usable_size(void* ptr) {\n  IOS_RPM_GUARD();\n#ifdef __APPLE__\n  return ::malloc_size(ptr);"
+if old in s:
+    p.write_text(s.replace(old, old.replace("  IOS_RPM_GUARD();\n", ""), 1))
+PY
+
 cmake -S "$SRC" -B "$BUILD" -G Ninja \
   -DCMAKE_SYSTEM_NAME=iOS \
   -DCMAKE_SYSTEM_PROCESSOR=arm64 \
