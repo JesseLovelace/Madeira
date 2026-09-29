@@ -16,51 +16,17 @@ fi
 # on iOS (xtajit.dll, xtajit64.dll), which calls Win32 APIs and symbols that
 # only those modules define. The native library the app links uses __APPLE__.
 
-# The pinned FEX logs a Win32 VirtualQuery region dump from iOS-host code
-# (IosLogUnimplementedCASPAL), which does not compile against the iOS SDK.
-# Keep the log line, drop the region dump.
-python3 - "$SRC/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp" <<'PY'
-import re, sys
-from pathlib import Path
-p = Path(sys.argv[1])
-s = p.read_text()
-if "MEMORY_BASIC_INFORMATION mbi" in s:
-    s, n = re.subn(r"  MEMORY_BASIC_INFORMATION mbi \{\};.*?mbi\.State\);\n",
-                   '  LogMan::Msg::EFmt("[caspal128] MISALIGNED-UNSUPPORTED Size={} addrReg=x{} addr={:#x} misalign={}",\n'
-                   '                    Size, AddressReg, GPRs[AddressReg], GPRs[AddressReg] & 15);\n',
-                   s, count=1, flags=re.S)
-    if n != 1:
-        raise SystemExit(f"expected VirtualQuery block not found in {p}")
-    p.write_text(s)
-PY
-
-# AllocatorHooks.cpp (JemallocLibs) uses IOS_RPM_GUARD() in its
-# ENABLE_FEX_ALLOCATOR=OFF branch, but only defines it when the allocator is
-# on. With the allocator off the guard is a no-op, so drop that use.
-python3 - "$SRC/FEXCore/Source/Utils/AllocatorHooks.cpp" <<'PY'
-import sys
-from pathlib import Path
-p = Path(sys.argv[1])
-s = p.read_text()
-old = "size_t malloc_usable_size(void* ptr) {\n  IOS_RPM_GUARD();\n#ifdef __APPLE__\n  return ::malloc_size(ptr);"
-if old in s:
-    p.write_text(s.replace(old, old.replace("  IOS_RPM_GUARD();\n", ""), 1))
-PY
-
-# Core.cpp drains a diagnostic snapshot from FEX's rpmalloc fork, which is not
-# linked with ENABLE_FEX_ALLOCATOR=OFF. Give it a weak "nothing to report" stub.
-python3 - "$SRC/FEXCore/Source/Interface/Core/Core.cpp" <<'PY'
-import sys
-from pathlib import Path
-p = Path(sys.argv[1])
-s = p.read_text()
-old = "int rpm_cas_snapshot_take(struct rpm_cas_snapshot* out);\n}\n"
-stub = "__attribute__((weak)) int rpm_cas_snapshot_take(struct rpm_cas_snapshot*) { return 0; }\n"
-if stub not in s:
-    if old not in s:
-        raise SystemExit(f"expected rpm_cas_snapshot_take declaration not found in {p}")
-    p.write_text(s.replace(old, old[:-2] + stub + "}\n", 1))
-PY
+# fex-ios.patch makes the pinned FEX compile and link for this target:
+# - Arm64.cpp: IosLogUnimplementedCASPAL dumps a Win32 VirtualQuery region;
+#   keep the log line, drop the dump.
+# - AllocatorHooks.cpp: IOS_RPM_GUARD() is used in the ENABLE_FEX_ALLOCATOR=OFF
+#   branch but only defined when the allocator is on; it is a no-op there.
+# - Core.cpp: the [ffs-bypass]/[cb-entry] reporters read counters declared only
+#   under FEX_IOS_HOST, and rpm_cas_snapshot_take lives in FEX's rpmalloc fork,
+#   which is not linked with the allocator off (weak stub, reports nothing).
+if ! git -C "$SRC" apply --reverse --check "$ROOT/scripts/build/fex-ios.patch" 2>/dev/null; then
+  git -C "$SRC" apply "$ROOT/scripts/build/fex-ios.patch"
+fi
 
 cmake -S "$SRC" -B "$BUILD" -G Ninja \
   -DCMAKE_SYSTEM_NAME=iOS \

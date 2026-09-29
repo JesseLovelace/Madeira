@@ -38,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: key
-        run: echo "key=fex-ios-$(git rev-parse HEAD:FEX)-${{ hashFiles('scripts/build/build-fex-ios.sh') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=fex-ios-$(git rev-parse HEAD:FEX)-${{ hashFiles('scripts/build/build-fex-ios.sh', 'scripts/build/fex-ios.patch') }}" >> "$GITHUB_OUTPUT"
       - id: cache
         uses: actions/cache@v4
         with:
