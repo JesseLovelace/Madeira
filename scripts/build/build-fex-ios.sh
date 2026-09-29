@@ -14,6 +14,7 @@ fi
 # -DFEX_IOS_HOST=1 selects the iOS host-feature stubs inside this FEX fork
 # (HostFeatures, InvalidationTracker, logging). A build without it compiles
 # but misdetects the host at runtime, so it is required here, not optional.
+# The remaining options mirror build/fex-ios/build.sh.
 cmake -S "$SRC" -B "$BUILD" -G Ninja \
   -DCMAKE_SYSTEM_NAME=iOS \
   -DCMAKE_SYSTEM_PROCESSOR=arm64 \
@@ -28,10 +29,12 @@ cmake -S "$SRC" -B "$BUILD" -G Ninja \
   -DBUILD_THUNKS=OFF \
   -DBUILD_FEXCONFIG=OFF \
   -DBUILD_STEAM_SUPPORT=OFF \
+  -DENABLE_FEX_ALLOCATOR=OFF \
+  -DENABLE_ASSERTIONS=OFF \
   -DENABLE_LTO=OFF \
   -DENABLE_CCACHE=OFF \
   -DTUNE_CPU=generic \
   -DTUNE_ARCH=generic
 
-cmake --build "$BUILD" --parallel "$JOBS"
+cmake --build "$BUILD" --target FEXCore FEXCore_Base --parallel "$JOBS"
 [[ -f "$OUT" ]] || { echo "ERROR: FEX build did not produce $OUT" >&2; exit 1; }

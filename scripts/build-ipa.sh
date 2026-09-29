@@ -33,6 +33,9 @@ log "Building GnuTLS stack for iOS"
 "$ROOT/build/gnutls-ios/build.sh"
 "$ROOT/scripts/build/sync-gnutls-libs.sh"
 
+log "Building FFmpeg for iOS"
+"$ROOT/build/ffmpeg/build.sh"
+
 log "Bootstrapping wineserver"
 "$ROOT/build/wineserver/bootstrap.sh"
 "$ROOT/build/wineserver/build.sh"
@@ -42,9 +45,12 @@ log "Building Wine unix libraries"
 "$ROOT/build/win32u-unix/build.sh"
 
 "$ROOT/scripts/build/build-llvm-ios.sh"
+# Xcode 26 installs the Metal compiler separately; returns at once when present.
+xcodebuild -downloadComponent MetalToolchain >/dev/null 2>&1 || true
 "$ROOT/scripts/build/build-shader-headers.sh"
 "$ROOT/scripts/build/build-dxmt-ios.sh"
 "$ROOT/scripts/build/prepare-vcruntime.sh"
+"$ROOT/build/stage-licenses.sh"
 "$ROOT/scripts/build/package-ipa.sh"
 
 printf '\n\033[1;32mDone: %s/dist/Madeira.ipa\033[0m\n' "$ROOT"

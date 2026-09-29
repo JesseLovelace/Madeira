@@ -20,9 +20,11 @@ if [[ ! -f "$WINE/build-macos/Makefile" ]]; then
   )
 fi
 
+# The iOS static libraries only consume config.h, the build tools and the
+# widl-generated headers, so build just those instead of every PE module.
 if [[ ! -f "$WINE/build-macos/include/dwrite.h" || ! -x "$WINE/build-macos/tools/winebuild/winebuild" ]]; then
-  echo "Building Wine host tree..."
-  make -C "$WINE/build-macos" -j"$JOBS"
+  echo "Building Wine host tools and headers..."
+  make -C "$WINE/build-macos" -j"$JOBS" tools/all tools/widl/all tools/winebuild/all include/all
 else
   echo "Wine host tree: cached"
 fi
@@ -36,7 +38,7 @@ if [[ ! -f "$WINE/build-arm64ec/Makefile" ]]; then
   mkdir -p "$WINE/build-arm64ec"
   (
     cd "$WINE/build-arm64ec"
-    ../configure --enable-archs=arm64ec --disable-tests
+    ../configure --enable-archs=arm64ec --without-x --disable-tests --enable-winegstreamer
   )
 fi
 
