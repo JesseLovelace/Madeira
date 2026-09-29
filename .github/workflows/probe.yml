@@ -12,7 +12,7 @@ jobs:
           set -euo pipefail
           export ROOT=$PWD JOBS=$(sysctl -n hw.ncpu)
           sw_vers; xcodebuild -version
-          brew install cmake ninja meson pkg-config autoconf automake libtool bison flex sevenzip llvm xxd || true
+          brew install cmake ninja meson pkg-config autoconf automake libtool bison flex sevenzip llvm
           export PATH="$(brew --prefix bison)/bin:$(brew --prefix llvm)/bin:$PATH"
           bash tools/check-prefix-template.sh app/Madeira/prefix-template.tar.gz
           scripts/build/setup-llvm-mingw.sh
