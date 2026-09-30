@@ -26,18 +26,6 @@ index be5431125..4c279239a 100644
  
    /* iOS-Madeira: refuse to compile obviously-invalid guest RIPs. After a
     * NULL-vtable virtual call (`call [rax+8]` with rax=0), control flow
-diff --git a/FEXCore/Source/Utils/AllocatorHooks.cpp b/FEXCore/Source/Utils/AllocatorHooks.cpp
-index 8d4840120..80f3b8e29 100644
---- a/FEXCore/Source/Utils/AllocatorHooks.cpp
-+++ b/FEXCore/Source/Utils/AllocatorHooks.cpp
-@@ -267,7 +267,6 @@ void free(void* ptr) {
-   return ::free(ptr);
- }
- size_t malloc_usable_size(void* ptr) {
--  IOS_RPM_GUARD();
- #ifdef __APPLE__
-   return ::malloc_size(ptr);
- #else
 diff --git a/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp b/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp
 index b2eca70f8..695d78ad0 100644
 --- a/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp
