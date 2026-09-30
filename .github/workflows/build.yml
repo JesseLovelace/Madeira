@@ -61,7 +61,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: key
-        run: echo "key=i386-windows-$(git rev-parse HEAD:wine)-$(git rev-parse HEAD:research/dxmt)-${{ hashFiles('build/wine-i386/build.sh', 'scripts/build/setup-llvm-mingw.sh') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=i386-windows-$(git rev-parse HEAD:wine)-$(git rev-parse HEAD:research/dxmt)-${{ hashFiles('build/wine-i386/build.sh', 'scripts/build/setup-llvm-mingw.sh', 'scripts/build/build-shader-headers.sh') }}" >> "$GITHUB_OUTPUT"
       - id: cache
         uses: actions/cache@v4
         with:
@@ -75,6 +75,10 @@ jobs:
           git submodule update --init --depth 1 wine
           git submodule update --init --recursive --depth 1 research/dxmt
           scripts/build/setup-llvm-mingw.sh
+          # DXMT's i386 build compiles Metal shaders: it needs the Metal toolchain
+          # and the Xcode 27 atomic fix that build-shader-headers.sh applies.
+          xcodebuild -downloadComponent MetalToolchain
+          scripts/build/build-shader-headers.sh
           build/wine-i386/build.sh
       - if: failure()
         run: tail -150 wine/build-i386/madeira-i386-build.log || true
