@@ -25,6 +25,12 @@ log "Validating bundled Wine prefix"
 bash "$ROOT/tools/check-prefix-template.sh" "$ROOT/app/Madeira/prefix-template.tar.gz"
 
 "$ROOT/scripts/build/setup-llvm-mingw.sh"
+
+# Madeira Dock: without app/Madeira/arm64ec-windows/dockhost.exe the app hides
+# Dock (docs/MADEIRA_DOCK.md). Uses llvm-mingw from the step above.
+log "Building Madeira Dock (dockhost.exe)"
+"$ROOT/build/madeira-dock/build.sh"
+
 "$ROOT/scripts/build/build-wine.sh"
 "$ROOT/scripts/build/build-fex-ios.sh"
 "$ROOT/scripts/build/build-freetype-ios.sh"

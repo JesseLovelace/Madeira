@@ -51,6 +51,7 @@ bundle_required=(
   "$APP/Madeira"
   "$APP/prefix-template.tar.gz"
   "$APP/arm64ec-windows/xtajit64.dll"
+  "$APP/arm64ec-windows/dockhost.exe"
   "$APP/x86_64-vcruntime/vcruntime140.dll"
 )
 for path in "${bundle_required[@]}"; do
