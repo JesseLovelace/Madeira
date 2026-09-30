@@ -30,7 +30,11 @@ bash "$ROOT/tools/check-prefix-template.sh" "$ROOT/app/Madeira/prefix-template.t
 "$ROOT/scripts/build/build-freetype-ios.sh"
 
 log "Building GnuTLS stack for iOS"
-"$ROOT/build/gnutls-ios/build.sh"
+if [[ -f "$ROOT/toolchains/gnutls-ios/lib/libgnutls.a" ]]; then
+  echo "GnuTLS iOS: cached"
+else
+  "$ROOT/build/gnutls-ios/build.sh"
+fi
 "$ROOT/scripts/build/sync-gnutls-libs.sh"
 
 log "Building FFmpeg for iOS"

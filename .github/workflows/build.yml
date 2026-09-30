@@ -111,6 +111,34 @@ jobs:
           key: ${{ needs.i386.outputs.key }}
           fail-on-cache-miss: true
           path: app/Madeira/i386-windows
+      # Third-party stages only change with their pins or build scripts. Each
+      # script skips when its output exists, so a cache hit leaves just
+      # Madeira's own code (wineserver, ntdll/win32u unix, the app) to build.
+      - id: pins
+        run: |
+          echo "wine=$(git rev-parse HEAD:wine)" >> "$GITHUB_OUTPUT"
+          echo "dxmt=$(git rev-parse HEAD:research/dxmt)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          key: deps-${{ hashFiles('build/gnutls-ios/**', 'build/ffmpeg/build.sh', 'build/ffmpeg/src/**', 'build/freetype-ios/build.sh', 'scripts/build/build-freetype-ios.sh', 'scripts/build/setup-llvm-mingw.sh') }}
+          path: |
+            toolchains/llvm-mingw-*
+            toolchains/gnutls-ios
+            toolchains/ffmpeg-ios
+            build/ffmpeg/obj
+            build/freetype-ios/build
+      - uses: actions/cache@v4
+        with:
+          key: wine-host-${{ steps.pins.outputs.wine }}-${{ hashFiles('scripts/build/build-wine.sh') }}
+          path: |
+            wine/build-macos
+            wine/build-arm64ec
+      - uses: actions/cache@v4
+        with:
+          key: dxmt-ios-${{ steps.pins.outputs.dxmt }}-${{ steps.pins.outputs.wine }}-${{ hashFiles('build/dxmt-ios/**', 'scripts/build/build-dxmt-ios.sh', 'scripts/build/build-shader-headers.sh', 'scripts/build/build-llvm-ios.sh') }}
+          path: |
+            app/Madeira/libdxmt_combined.a
+            build/dxmt-ios/shader-headers
       - name: Build IPA
         run: scripts/build-ipa.sh
       - uses: actions/upload-artifact@v4
