@@ -120,13 +120,14 @@ jobs:
           echo "dxmt=$(git rev-parse HEAD:research/dxmt)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
         with:
-          key: deps-${{ hashFiles('build/gnutls-ios/**', 'build/ffmpeg/build.sh', 'build/ffmpeg/src/**', 'build/freetype-ios/build.sh', 'scripts/build/build-freetype-ios.sh', 'scripts/build/setup-llvm-mingw.sh') }}
+          key: deps-v2-${{ hashFiles('build/gnutls-ios/**', 'build/ffmpeg/build.sh', 'build/ffmpeg/src/**', 'build/freetype-ios/build.sh', 'scripts/build/build-freetype-ios.sh', 'scripts/build/setup-llvm-mingw.sh') }}
           path: |
             toolchains/llvm-mingw-*
             toolchains/gnutls-ios
             toolchains/ffmpeg-ios
             build/ffmpeg/obj
             build/freetype-ios/build
+            research/freetype
       - uses: actions/cache@v4
         with:
           key: wine-host-${{ steps.pins.outputs.wine }}-${{ hashFiles('scripts/build/build-wine.sh') }}
