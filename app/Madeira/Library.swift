@@ -52,8 +52,8 @@ enum DeviceLoadDiagnostics {
     }
 }
 
-/// Which build is installed, shown in light grey in Settings > Ready to play and
-/// the developer interface, and logged once at start ([build]). A build that
+/// Which build is installed, shown in light grey in the developer interface, and
+/// logged once at start ([build]). A build that
 /// writes `MadeiraBuild` into Info.plist (a round tag and build time) shows that;
 /// other builds show the bundle version. MADEIRA_BUILD_LABEL=0 hides the label
 /// (the log line stays).
@@ -1419,22 +1419,25 @@ struct AmbientGlow: View {
         // A soft wash on the wall, and the brighter band just past the edge where the
         // strip's light lands first.
         return ZStack {
-            art().scaleEffect(1.11).blur(radius: size.width * 0.085)
+            art().scaleEffect(1.09).blur(radius: size.width * 0.07)
             art().scaleEffect(1.03).blur(radius: size.width * 0.03).opacity(0.75)
         }
         .frame(width: frame.width, height: frame.height)
-        .saturation(dimmed ? 1.15 : 1.5)
+        // On a light page the blurred art's mid-tones read as grey: lifted and more
+        // vivid there, it reads as coloured light.
+        .saturation(dimmed ? 1.15 : (scheme == .dark ? 1.5 : 1.9))
+        .brightness(scheme == .dark ? 0 : (dimmed ? 0.04 : 0.12))
         .drawingGroup()
     }
 
     var body: some View {
         // Kept tight, so neighbouring cards' light stays apart in the gaps between them.
-        let spread = size.width * 0.20
+        let spread = size.width * 0.17
         let frame = CGSize(width: size.width + spread * 2, height: size.height + spread * 2)
         let movie = AmbientMovie(seed: seed)
         let dark = scheme == .dark
         // A game that is not installed throws a fainter, less vivid light.
-        let strength = (dark ? 1.0 : 0.6) * (dimmed ? 0.3 : 1)
+        let strength = (dark ? 0.92 : 0.8) * (dimmed ? 0.3 : 1)
         let plain = layer(0, false, frame: frame), turned = layer(180, false, frame: frame), mirrored = layer(0, true, frame: frame)
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
@@ -1446,6 +1449,9 @@ struct AmbientGlow: View {
             }
             .compositingGroup()
             .hueRotation(.degrees(f.hue))
+            // In the dark the light adds to the page (plusLighter): a very bright artwork's
+            // light is brought down at the top (AmbientGlow.metal) so it does not glare.
+            .colorEffect(ShaderLibrary.ambientKnee(.float(dark ? 0.3 : 0)))
             .mask { AmbientMovie.mask(f.light) }
             .mask {
                 let turn = reduceMotion ? 0 : 1.2 * sin(t * 0.12 + Double(seed % 97))
@@ -1569,6 +1575,46 @@ enum AmbientArtwork {
     }
 }
 
+/// Whether the app's liquid metal is on: Settings › Appearance › Liquid metal, kept in
+/// madeira.cfg as env.MADEIRA_LIQUID_METAL (off, plain Liquid Glass, unless it is 1). It
+/// covers the Desktop button's fill (LiquidMetalFill) and the bars' glass (GlassSkin), and
+/// applies at once, fading between the two.
+@MainActor final class LiquidMetalSetting: ObservableObject {
+    static let shared = LiquidMetalSetting()
+    @Published var on = MadeiraConfig.flag("MADEIRA_LIQUID_METAL", fallback: false) {
+        didSet {
+            guard on != oldValue else { return }
+            MadeiraConfig.set("env.MADEIRA_LIQUID_METAL", on ? "1" : nil)
+            if on { GlassSkin.shared.start(fadeIn: true) } else { GlassSkin.shared.stop() }
+        }
+    }
+}
+
+/// A flowing liquid-chrome fill (LiquidMetal.metal, a SwiftUI color shader): white
+/// highlights, silver and navy, rainbow dispersion at the highlights' edges and a raised
+/// rim, in a capsule (a rounded box of radius half its height). Animated at 60 frames a
+/// second; held still with Reduce Motion. Its callers draw their previous fill when liquid
+/// metal is off (LiquidMetalSetting).
+struct LiquidMetalFill: View {
+    @Environment(\.displayScale) private var displayScale
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        GeometryReader { geometry in
+            TimelineView(.animation(minimumInterval: 1.0 / 60, paused: reduceMotion)) { context in
+                // Kept small, so the shader's float time stays precise.
+                let time = Float(context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 3600))
+                Rectangle()
+                    .colorEffect(ShaderLibrary.liquidMetal(.float2(geometry.size), .float(reduceMotion ? 0 : time),
+                                                           .float(Float(displayScale)), .float(scheme == .light ? 1 : 0)))
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 private struct LibraryCardPressedKey: EnvironmentKey { static let defaultValue = false }
 extension EnvironmentValues {
     /// Whether the library card this view is in is being pressed (LibraryCardButtonStyle).
@@ -1637,25 +1683,34 @@ struct LibraryBadges: View {
     }
 }
 
+/// JIT and Memory+ at the top of Settings, each with a green check or a red cross (the
+/// developer interface's badges), and "Ready to play" beside them once both are there.
+/// Checked every 2 s.
 struct LibraryStatus: View {
     @State private var jit = false
     @State private var memory = false
     let ticks = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
     var body: some View {
-        HStack(spacing: 14) {
-            status("JIT", jit)
-            status("Memory+", memory)
-            if BuildStamp.visible {
-                Text(BuildStamp.text).font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(Color(.systemGray2)).lineLimit(1).minimumScaleFactor(0.7)
-                    .accessibilityLabel("Build \(BuildStamp.text)")
+        HStack(spacing: 8) {
+            badge("JIT", jit)
+            badge("Memory+", memory)
+            if jit && memory {
+                Text("Ready to play").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                    .padding(.leading, 4)
             }
         }
-            .onAppear { update() }.onReceive(ticks) { _ in update() }
+        .onAppear { update() }.onReceive(ticks) { _ in update() }
     }
-    private func status(_ label: String, _ enabled: Bool) -> some View {
-        HStack(spacing: 5) { Circle().fill(enabled ? Color.green : Color.orange).frame(width: 6, height: 6); Text(label).font(.caption2) }
-            .accessibilityElement(children: .ignore).accessibilityLabel("\(label): \(enabled ? "enabled" : "unavailable")")
+    private func badge(_ label: String, _ enabled: Bool) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: enabled ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .foregroundStyle(enabled ? Color.green : Color.red)
+            Text(label).foregroundStyle(enabled ? .primary : .secondary)
+        }
+        .font(.footnote)
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background((enabled ? Color.green : Color.red).opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+        .accessibilityElement(children: .ignore).accessibilityLabel("\(label): \(enabled ? "enabled" : "unavailable")")
     }
     private func update() { jit = jit_check_debugged(); memory = EntitlementStatus.check().increasedMemory }
 }
@@ -1725,6 +1780,8 @@ struct LibraryCells<Item: Identifiable, Cell: View>: View {
 struct LibraryView: View {
     @ObservedObject private var model = LibraryModel.shared
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var liquidMetal = LiquidMetalSetting.shared
     var play: (LibraryEntry) -> Void
     var enableJIT: () -> Void
     @ObservedObject private var jitState = LibraryJITState.shared
@@ -1765,14 +1822,15 @@ struct LibraryView: View {
     }
     var body: some View {
         // The system tab bar: on iOS 26 it is the floating Liquid Glass bar whose
-        // glass selection slides between the tabs and follows a drag.
+        // glass selection slides between the tabs and follows a drag. Icons only; the
+        // names stay for VoiceOver.
         TabView(selection: Binding(get: { tab }, set: { switchTab(to: $0) })) {
             library
                 .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
-                .tabItem { Label("Library", systemImage: "square.grid.2x2.fill") }
+                .tabItem { Image(systemName: "square.grid.2x2.fill").accessibilityLabel("Library") }
                 .tag(0)
             settings
-                .tabItem { Label("Settings", systemImage: "gearshape.fill") }
+                .tabItem { Image(systemName: "gearshape.fill").accessibilityLabel("Settings") }
                 .tag(1)
         }
         // The system search field (Liquid Glass on iOS 26) in the title's place, left
@@ -1846,12 +1904,10 @@ struct LibraryView: View {
     }
     private var settings: some View {
         Form {
-            if settingsShow("ready to play", "enable JIT", "JIT", "StikDebug", "status") {
-                Section("Ready to play") {
-                    LibraryStatus()
-                    Button(action: enableJIT) { Label("Enable JIT", systemImage: "bolt.fill") }
-                        .disabled(jitState.enabled)
-                }
+            // The status sits on the page, not in a card; JIT is enabled from the
+            // toolbar's Enable JIT button.
+            if settingsShow("ready to play", "JIT", "Memory+", "StikDebug", "status") {
+                Section { LibraryStatus().listRowBackground(Color.clear) }
             }
             if settingsShow("diagnostics", "extended logging", "logging", "log") {
                 Section {
@@ -1869,6 +1925,13 @@ struct LibraryView: View {
             }
             if SteamSettingsSection.shown, settingsShow("Steam", "Dock", "sign in", "account", "setup") {
                 SteamSettingsSection(open: { settingsSheet = $0 })
+            }
+            if settingsShow("appearance", "liquid metal", "metal", "glass") {
+                Section {
+                    Toggle("Liquid metal", isOn: $liquidMetal.on)
+                } header: { Text("Appearance") } footer: {
+                    Text("Flowing chrome on the bars and the Desktop button. Off, they use the system's Liquid Glass.")
+                }
             }
             if settingsShow("interface", "developer") {
                 Section {
@@ -1917,10 +1980,22 @@ struct LibraryView: View {
             VStack(alignment: .leading, spacing: 24) {
                 HStack {
                     Button { selected = model.entries.first(where: { $0.desktop == true }) ?? .desktopEntry } label: {
-                        Label("Desktop", systemImage: "desktopcomputer")
-                            .font(.subheadline.weight(.medium)).padding(.horizontal, 14).frame(minHeight: 44)
-                            .background(Color(uiColor: .secondarySystemGroupedBackground), in: Capsule())
+                        if liquidMetal.on {
+                            // On the chrome's middle band (dark, or light in light mode), with a soft
+                            // halo of the other tone for the moments a highlight passes under it.
+                            let light = colorScheme == .light
+                            Label("Desktop", systemImage: "desktopcomputer")
+                                .font(.subheadline.weight(.semibold)).foregroundStyle(light ? .black : .white)
+                                .shadow(color: (light ? Color.white : .black).opacity(0.75), radius: 2.5)
+                                .padding(.horizontal, 14).frame(minHeight: 44)
+                                .background(LiquidMetalFill())
+                        } else {
+                            Label("Desktop", systemImage: "desktopcomputer")
+                                .font(.subheadline.weight(.medium)).padding(.horizontal, 14).frame(minHeight: 44)
+                                .background(Color(uiColor: .secondarySystemGroupedBackground), in: Capsule())
+                        }
                     }.buttonStyle(.plain)
+                        .animation(UIAccessibility.isReduceMotionEnabled ? nil : .easeInOut(duration: 0.4), value: liquidMetal.on)
                         .id(LibraryEntry.desktopID)
                         .overlay(RoundedRectangle(cornerRadius: 22).stroke(focused == LibraryEntry.desktopID && controller.connected ? Color.cyan : .clear, lineWidth: 3))
                 }
@@ -2005,7 +2080,10 @@ struct LibraryView: View {
             Button("OK", role: .cancel) { model.error = nil }
         } message: { Text(model.error ?? "") }
         .onChange(of: scenePhase) { _, phase in if phase == .active { model.refreshFlag() } }
-        .onAppear { if focused == nil { focused = LibraryEntry.desktopID } }
+        .onAppear {
+            if focused == nil { focused = LibraryEntry.desktopID }
+            GlassSkin.shared.start()   // liquid metal on the navigation bar's glass pills
+        }
         .onChange(of: focused) { _, id in
             if let id { withAnimation(UIAccessibility.isReduceMotionEnabled ? nil : .easeInOut(duration: 0.2)) { reader.scrollTo(id, anchor: .center) } }
         }
