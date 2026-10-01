@@ -42,6 +42,12 @@ class SteamLibraryFetcher {
         // Step 5: app info (name, depots, platform support, ...).
         let appInfos = try await fetchAppInfo(appIDs: Array(appIDs), tokens: appTokens)
         SteamLog.trace("Got info for \(appInfos.count) apps")
+        // Where an owned app leaves the list, by App ID (no account data).
+        func ids(_ list: [String]) -> String { list.isEmpty ? "-" : list.joined(separator: ",") }
+        SteamLog.event("[steam-library] diag packages=\(packageIDs.count) app-ids=\(ids(appIDs.sorted().map(String.init)))")
+        let got = Set(appInfos.map(\.appID))
+        SteamLog.event("[steam-library] diag no-info=\(ids(appIDs.subtracting(got).sorted().map(String.init)))")
+        SteamLog.event("[steam-library] diag not-playable=\(ids(appInfos.filter { !$0.type.isPlayable }.sorted { $0.appID < $1.appID }.map { "\($0.appID):\($0.type.rawValue)" }))")
 
         // Playable types only: games, demos and applications. This leaves out
         // DLC, soundtracks and tools (redistributables, runtimes, SDKs, servers).
@@ -245,7 +251,14 @@ class SteamLibraryFetcher {
                 for app in picsResponse.apps {
                     if let info = SteamAppInfo.parse(appID: app.appid, from: app.buffer) {
                         allApps.append(info)
+                    } else {
+                        let why = app.missingToken ? "token" : app.buffer.isEmpty ? "empty"
+                            : String(data: app.buffer, encoding: .utf8) == nil ? "utf8" : "no-name"
+                        SteamLog.event("[steam-library] diag dropped app=\(app.appid) reason=\(why) bytes=\(app.buffer.count)")
                     }
+                }
+                if !picsResponse.unknownApps.isEmpty {
+                    SteamLog.event("[steam-library] diag unknown-apps=\(picsResponse.unknownApps.map(String.init).joined(separator: ","))")
                 }
             }
         }
@@ -270,7 +283,8 @@ enum VDFParser {
     /// format. Leaf values are always `String`. Standard VDF does not process
     /// escape sequences, so a quoted string runs verbatim to the next `"`.
     static func parseTextVDF(from data: Data) -> [String: Any] {
-        guard let text = String(data: data, encoding: .utf8) else { return [:] }
+        // Lossy: one invalid byte in a description must not lose the whole app.
+        let text = String(decoding: data, as: UTF8.self)
         let scalars = Array(text.unicodeScalars)
         var i = 0
         let n = scalars.count

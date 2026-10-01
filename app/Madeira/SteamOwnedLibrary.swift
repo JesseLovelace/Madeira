@@ -307,6 +307,9 @@ final class SteamOwnedLibrary: ObservableObject {
             cachedAccount = Self.accountKey(SteamSignIn.accountName)
             writeCache()
             SteamLog.event("[steam-library] owned apps=\(apps.count) windows-installable=\(games.count)")
+            for app in apps where !app.installableOnWindows {
+                SteamLog.event("[steam-library] diag not-installable app=\(app.appID) oslist=\(app.oslist) depots=\(app.depotSelectionSummary())")
+            }
             await refreshPlaytime()
         } catch {
             handleSessionError(error, context: "library", report: interactive)
