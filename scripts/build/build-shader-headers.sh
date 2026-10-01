@@ -5,7 +5,7 @@
 # that generation with the same compiler, flags, and xxd embedding.
 set -euo pipefail
 ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-SRC="$ROOT/research/dxmt/src/airconv/shaders"
+SRC="$ROOT/dxmt/src/airconv/shaders"
 OUT="$ROOT/build/dxmt-ios/shader-headers"
 SHADERS=(air_msad air_samplepos air_tessellation)
 

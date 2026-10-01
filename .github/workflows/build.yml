@@ -61,7 +61,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: key
-        run: echo "key=i386-windows-$(git rev-parse HEAD:wine)-$(git rev-parse HEAD:research/dxmt)-${{ hashFiles('build/wine-i386/build.sh', 'scripts/build/setup-llvm-mingw.sh', 'scripts/build/build-shader-headers.sh') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=i386-windows-$(git rev-parse HEAD:wine)-$(git rev-parse HEAD:dxmt)-${{ hashFiles('build/wine-i386/build.sh', 'scripts/build/setup-llvm-mingw.sh', 'scripts/build/build-shader-headers.sh') }}" >> "$GITHUB_OUTPUT"
       - id: cache
         uses: actions/cache@v4
         with:
@@ -73,7 +73,7 @@ jobs:
           brew install meson ninja bison || true
           export PATH="$(brew --prefix bison)/bin:$PATH"
           git submodule update --init --depth 1 wine
-          git submodule update --init --recursive --depth 1 research/dxmt
+          git submodule update --init --recursive --depth 1 dxmt
           scripts/build/setup-llvm-mingw.sh
           # DXMT's i386 build compiles Metal shaders: it needs the Metal toolchain
           # and the Xcode 27 atomic fix that build-shader-headers.sh applies.
@@ -117,7 +117,7 @@ jobs:
       - id: pins
         run: |
           echo "wine=$(git rev-parse HEAD:wine)" >> "$GITHUB_OUTPUT"
-          echo "dxmt=$(git rev-parse HEAD:research/dxmt)" >> "$GITHUB_OUTPUT"
+          echo "dxmt=$(git rev-parse HEAD:dxmt)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
         with:
           key: deps-v2-${{ hashFiles('build/gnutls-ios/**', 'build/ffmpeg/build.sh', 'build/ffmpeg/src/**', 'build/freetype-ios/build.sh', 'scripts/build/build-freetype-ios.sh', 'scripts/build/setup-llvm-mingw.sh') }}
