@@ -1,0 +1,57 @@
+diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
+index be54311..78e8253 100644
+--- a/FEXCore/Source/Interface/Core/Core.cpp
++++ b/FEXCore/Source/Interface/Core/Core.cpp
+@@ -2452,7 +2452,9 @@ void ContextImpl::MonoBackpatcherWrite(FEXCore::Core::CpuStateFrame* Frame, uint
+      *
+      * A miss is counted and falls through to the direct store, which faults and
+      * is emulated as before: degraded, never wrong. */
+-    const uint64_t RW = IosMonoResolveRW(Address, Size);
++    // The alias table is keyed on host addresses; `Address` is only one of those when there is no
++    // guest window.
++    const uint64_t RW = IosMonoResolveRW(Dest, Size);
+     if (RW) {
+       Dest = RW;
+     }
+diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
+index 6732edc..284679d 100644
+--- a/Source/Windows/WOW64/Module.cpp
++++ b/Source/Windows/WOW64/Module.cpp
+@@ -300,6 +300,12 @@ class WowSyscallHandler;
+ //
+ // GuestBase stays 0 when this module is not running under the iOS host, in which case everything
+ // below degrades to the upstream identity behaviour.
++#ifdef FEX_IOS_HOST
++// Wine-private NtQueryInformationProcess class: the address of the unix side's ios_mono_bridge.
++static constexpr ULONG ProcessWineIosMonoBridge = 1011;
++extern "C" void BTCpuIosSetMonoBridge(uint64_t BridgeAddr); // IosMonoBridge.cpp
++#endif
++
+ namespace GuestWindow {
+ // Wine-private NtQueryInformationProcess class, declared next to ProcessWineMakeProcessSystem in
+ // wine/include/winternl.h. Returns the ULONG_PTR host address of guest address 0 for the target
+@@ -1285,6 +1291,24 @@ void BTCpuProcessInit() {
+   InvalidationTracker.emplace(*CTX, Threads, GuestWindow::Base);
+   ImageTracker.emplace(*CTX, false);
+ 
++#ifdef FEX_IOS_HOST
++  // MADEIRA: take the Mono backpatcher bridge. The ARM64EC module is handed it by ntdll at process
++  // init; nothing hands it to this one, so ask. Without it ios_fex_mono_arm() is a no-op, the
++  // backpatcher block is never recognised, and a call site Mono patches keeps running its stale
++  // translation: every call goes back through the trampoline and patches the site again. This has
++  // to precede the first image notification, which is what arms the bridge.
++  {
++    ULONG_PTR Bridge = 0;
++    const NTSTATUS Err =
++      NtQueryInformationProcess(NtCurrentProcess(), static_cast<PROCESSINFOCLASS>(ProcessWineIosMonoBridge), &Bridge, sizeof(Bridge), nullptr);
++    if (!Err && Bridge) {
++      BTCpuIosSetMonoBridge(static_cast<uint64_t>(Bridge));
++    }
++    IosRawReport("E [mono-bridge] wow64 class {} -> status={:#x} bridge={:#x}", ProcessWineIosMonoBridge, static_cast<uint32_t>(Err),
++                 static_cast<uint64_t>(Bridge));
++  }
++#endif
++
+   // The 64-bit PEB's ImageBaseAddress is a HOST address: ntdll-unix's init_peb stores the address
+   // it actually mapped the i386 image at, i.e. inside the window. No conversion.
+   auto MainModule = reinterpret_cast<__TEB*>(CurrentTEB())->Peb->ImageBaseAddress;

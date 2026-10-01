@@ -124,6 +124,7 @@ extern volatile int madeira_diag_enabled;
 /* ml648: defined in virtual_ios.c, called from the SWPAL emulation path. */
 void ios_mono_bridge_capture( unsigned long long teb, unsigned long long frame,
                               unsigned long long host_pc, unsigned long long fault_addr );
+extern int ios_wow_addr_in_guest_window( const void *addr );  /* virtual_ios.c */
 
 
 /* ml255: storm gate -- see ios_storm_gate in virtual_ios.c for the rationale
@@ -3568,7 +3569,11 @@ static void *ios_mach_exception_thread( void *arg )
                              * that). x28 is FEX's state frame, x18 the TEB; both are just
                              * numbers here and are treated as untrusted. Everything is
                              * interpreted later at the FEX safe point. */
-                            if (size_lg2 == 3)
+                            /* A 32-bit Mono patches a call's rel32 with a
+                             * 4-byte XCHG; that only happens inside a guest
+                             * window, so the 64-bit rule is unchanged. */
+                            if (size_lg2 == 3 ||
+                                (size_lg2 == 2 && ios_wow_addr_in_guest_window( (void *)(uintptr_t)fault_addr )))
                                 ios_mono_bridge_capture( state.__x[18], state.__x[28],
                                                          (uint64_t)state.__pc,
                                                          (uint64_t)fault_addr );

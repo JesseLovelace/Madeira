@@ -2397,6 +2397,12 @@ void fill_vm_counters( VM_COUNTERS_EX *pvmi, int unix_pid )
 /**********************************************************************
  *           NtQueryInformationProcess  (NTDLL.@)
  */
+/* Wine-private class, next after ProcessWineIosWowGuestBase (1010).  Spelled
+ * out here because its only caller, the FEX WoW64 module, does not build
+ * against Wine's headers either. */
+#define ProcessWineIosMonoBridge ((PROCESSINFOCLASS)1011)
+extern NTSTATUS unixcall_ios_mono_bridge_ptr( void *args );
+
 NTSTATUS WINAPI NtQueryInformationProcess( HANDLE handle, PROCESSINFOCLASS class, void *info,
                                            ULONG size, ULONG *ret_len )
 {
@@ -2778,6 +2784,22 @@ NTSTATUS WINAPI NtQueryInformationProcess( HANDLE handle, PROCESSINFOCLASS class
             }
             SERVER_END_REQ;
             if (!ret) *(ULONG_PTR *)info = val;
+        }
+        break;
+
+    /* Address of the Mono backpatcher bridge (ios_mono_bridge.h), for the FEX
+     * WoW64 module.  The 64-bit FEX module receives the same pointer from ntdll
+     * at process init; a 32-bit process's CPU backend is loaded by wow64.dll,
+     * which has no unix call for it, so it asks here instead. */
+    case ProcessWineIosMonoBridge:
+        len = sizeof(ULONG_PTR);
+        if (size != len) return STATUS_INFO_LENGTH_MISMATCH;
+        if (handle != GetCurrentProcess()) return STATUS_INVALID_PARAMETER;
+        else
+        {
+            ULONG64 bridge = 0;
+            unixcall_ios_mono_bridge_ptr( &bridge );
+            *(ULONG_PTR *)info = bridge;
         }
         break;
 
