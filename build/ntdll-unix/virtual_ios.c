@@ -11210,7 +11210,11 @@ static int ios_guest_image_is_host_data( const void *base, size_t size )
  * is in flight), anything already backed by the JIT pool or an anon-JIT alias is
  * left as it is, and so are images (ml1030 handles those) and file mappings.
  * Small views (< 64 KB) are left alone too, in case a builtin emits a native
- * thunk page without EC_CODE.
+ * thunk page without EC_CODE. And a page FEX translates code from goes back to
+ * the original path when FEX arms it (see ios_guest_anon_rwx_is_host_data): a
+ * first cut converted Mono's JIT code chunks, whose call sites Mono patches with
+ * unaligned atomic xchg, and Cuphead's main thread deadlocked right after a burst
+ * of those on an armed page.
  *
  * MADEIRA_GUEST_RWX_DATA=0 restores the previous behaviour exactly. */
 static int ios_alloc_ec_code;   /* set by allocate_virtual_memory under virtual_mutex */
@@ -11226,24 +11230,47 @@ static int ios_guest_rwx_data_enabled(void)
     return cached;
 }
 
-static int ios_guest_anon_rwx_is_host_data( const void *base, size_t size )
+static int ios_guest_anon_rwx_view_ok( const struct file_view *view )
+{
+    if (!is_view_valloc( view )) return 0;
+    if (view->protect & (SEC_IMAGE | VPROT_ARM64EC | VPROT_SYSTEM)) return 0;
+    return view->size >= 0x10000;
+}
+
+/* `unix_prot` is the request. Only a WRITABLE request converts: FEX arms its SMC
+ * trap on a page it has translated code from with PAGE_EXECUTE_READ, and such a
+ * page (Mono's JIT code chunks, which it also patches with unaligned atomic
+ * xchg) is left to the original pool-alias path from then on -- the
+ * alias-cover check below keeps it there. A converted page that later becomes
+ * pool-backed this way loses nothing: that path copies the bytes before it
+ * remaps. Pure data (the GC heap) is never armed and stays plain memory.
+ *
+ * The range is host-page rounded (16 KB) and so can run past the end of a
+ * guest allocation (Boehm's chunks are 0x41000): every view it touches must
+ * qualify, rather than one view having to contain all of it. */
+static int ios_guest_anon_rwx_is_host_data( const void *base, size_t size, int unix_prot )
 {
 #ifdef WINE_IOS
     extern int ios_jit_anon_alias_find_cover(void *, size_t, void **, void **);
     extern void *ios_jit_rx_base_global;
     extern size_t ios_jit_pool_size_global;
-    struct file_view *view;
     void *cov_rw = NULL, *cov_rx = NULL;
-    uintptr_t b = (uintptr_t)base, rx = (uintptr_t)ios_jit_rx_base_global;
+    uintptr_t b = (uintptr_t)base, e = b + size, a, rx = (uintptr_t)ios_jit_rx_base_global;
+    int any = 0;
 
     if (!ios_guest_rwx_data_enabled() || ios_alloc_ec_code || !arm64ec_view) return 0;
-    if (rx && b + size > rx && b < rx + ios_jit_pool_size_global) return 0;
-    if (!(view = find_view( base, size ))) return 0;
-    if (!is_view_valloc( view )) return 0;
-    if (view->protect & (SEC_IMAGE | VPROT_ARM64EC | VPROT_SYSTEM)) return 0;
-    if (view->size < 0x10000) return 0;
+    if (!(unix_prot & PROT_WRITE) || e <= b) return 0;
+    if (rx && e > rx && b < rx + ios_jit_pool_size_global) return 0;
     if (ios_jit_anon_alias_find_cover( (void *)base, size, &cov_rw, &cov_rx )) return 0;
-    return 1;
+    for (a = b; a < e; )
+    {
+        struct file_view *view = find_view( (const void *)a, 1 );
+        if (!view) { a = (a + 0x1000) & ~(uintptr_t)0xfff; continue; }   /* rounding gap */
+        if (!ios_guest_anon_rwx_view_ok( view )) return 0;
+        any = 1;
+        a = (uintptr_t)view->base + view->size;
+    }
+    return any;
 #else
     return 0;
 #endif
@@ -11303,7 +11330,7 @@ static inline int mprotect_exec( void *base, size_t size, int unix_prot )
         unix_prot &= ~PROT_EXEC;
         if (!unix_prot) unix_prot = PROT_READ;   /* PAGE_EXECUTE alone: readable is the honest answer */
     }
-    else if ((unix_prot & PROT_EXEC) && ios_guest_anon_rwx_is_host_data( base, size ))
+    else if ((unix_prot & PROT_EXEC) && ios_guest_anon_rwx_is_host_data( base, size, unix_prot ))
     {
         static unsigned long grd_n;
         if (++grd_n <= 24 && !ios_in_mach_exc)
