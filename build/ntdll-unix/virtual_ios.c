@@ -11186,6 +11186,70 @@ static int ios_guest_image_is_host_data( const void *base, size_t size )
 }
 
 
+/* iOS-Madeira: A GUEST'S ANONYMOUS RWX HEAP IS DATA TO THE HOST, TOO.
+ *
+ * THE SYMPTOM. Cuphead (Unity 2017, mono.dll with the Boehm GC) stutters and
+ * freezes once gameplay allocates: one run logged 22.7M "[fault-cost] emulated-
+ * store" faults, ~96 s of handler time, 99% from one thread, every block RIP in
+ * mono.dll. Boehm's Win32 heap is VirtualAlloc(PAGE_EXECUTE_READWRITE) (0x41000
+ * and 0x100000 chunks, e.g. 0x7035580000), so mprotect_exec below finds no host
+ * exec, carves a JIT-pool slot, remaps it R+X and routes EVERY heap store through
+ * the Mach-fault store emulator (~4 us each).
+ *
+ * THE REASONING is ml1030's, and FEX's own (WOW64/Module.cpp, the Bop page):
+ * "Executability is FEX's own bookkeeping, not the host page protection." x86
+ * bytes are decoded, never fetched by the host CPU. SMC is tracked by FEX's
+ * InvalidationTracker through NtProtectVirtualMemory -- it arms a page with
+ * PAGE_EXECUTE_READ (-> PROT_READ here) once it translates from it and
+ * HandleRWXAccessViolation disarms it with PAGE_EXECUTE_READWRITE (-> read/write)
+ * after invalidating. A heap page that never held translated code simply
+ * becomes ordinary writable memory: no faults at all.
+ *
+ * THE SCOPE. Native code needs host exec, so it is excluded: FEX's code buffers
+ * are EC_CODE requests (VPROT_ARM64EC, and ios_alloc_ec_code while the request
+ * is in flight), anything already backed by the JIT pool or an anon-JIT alias is
+ * left as it is, and so are images (ml1030 handles those) and file mappings.
+ * Small views (< 64 KB) are left alone too, in case a builtin emits a native
+ * thunk page without EC_CODE.
+ *
+ * MADEIRA_GUEST_RWX_DATA=0 restores the previous behaviour exactly. */
+static int ios_alloc_ec_code;   /* set by allocate_virtual_memory under virtual_mutex */
+
+static int ios_guest_rwx_data_enabled(void)
+{
+    static int cached = -1;
+    if (cached < 0)
+    {
+        const char *s = getenv( "MADEIRA_GUEST_RWX_DATA" );
+        cached = (s && (*s == '0' || *s == 'n' || *s == 'N')) ? 0 : 1;
+    }
+    return cached;
+}
+
+static int ios_guest_anon_rwx_is_host_data( const void *base, size_t size )
+{
+#ifdef WINE_IOS
+    extern int ios_jit_anon_alias_find_cover(void *, size_t, void **, void **);
+    extern void *ios_jit_rx_base_global;
+    extern size_t ios_jit_pool_size_global;
+    struct file_view *view;
+    void *cov_rw = NULL, *cov_rx = NULL;
+    uintptr_t b = (uintptr_t)base, rx = (uintptr_t)ios_jit_rx_base_global;
+
+    if (!ios_guest_rwx_data_enabled() || ios_alloc_ec_code || !arm64ec_view) return 0;
+    if (rx && b + size > rx && b < rx + ios_jit_pool_size_global) return 0;
+    if (!(view = find_view( base, size ))) return 0;
+    if (!is_view_valloc( view )) return 0;
+    if (view->protect & (SEC_IMAGE | VPROT_ARM64EC | VPROT_SYSTEM)) return 0;
+    if (view->size < 0x10000) return 0;
+    if (ios_jit_anon_alias_find_cover( (void *)base, size, &cov_rw, &cov_rx )) return 0;
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+
 static inline int mprotect_exec( void *base, size_t size, int unix_prot )
 {
 #ifdef WINE_IOS
@@ -11238,6 +11302,21 @@ static inline int mprotect_exec( void *base, size_t size, int unix_prot )
                      (unix_prot & PROT_WRITE) ? 'w' : '-' );
         unix_prot &= ~PROT_EXEC;
         if (!unix_prot) unix_prot = PROT_READ;   /* PAGE_EXECUTE alone: readable is the honest answer */
+    }
+    else if ((unix_prot & PROT_EXEC) && ios_guest_anon_rwx_is_host_data( base, size ))
+    {
+        static unsigned long grd_n;
+        if (++grd_n <= 24 && !ios_in_mach_exc)
+            dprintf( 2, "[guest-rwx] #%lu %p+0x%lx prot=%c%c%c — anonymous guest memory, "
+                        "EXEC is FEX bookkeeping; applying %c%c- instead\n",
+                     grd_n, base, (unsigned long)size,
+                     (unix_prot & PROT_READ)  ? 'r' : '-',
+                     (unix_prot & PROT_WRITE) ? 'w' : '-',
+                     (unix_prot & PROT_EXEC)  ? 'x' : '-',
+                     (unix_prot & PROT_READ)  ? 'r' : '-',
+                     (unix_prot & PROT_WRITE) ? 'w' : '-' );
+        unix_prot &= ~PROT_EXEC;
+        if (!unix_prot) unix_prot = PROT_READ;
     }
 
 #endif
@@ -19318,6 +19397,7 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
     /* Reserve the memory */
 
     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
+    ios_alloc_ec_code = (attributes & MEM_EXTENDED_PARAMETER_EC_CODE) != 0;   /* see ios_guest_anon_rwx_is_host_data */
 
     if ((type & MEM_RESERVE) || !base)
     {
@@ -19463,6 +19543,7 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
 
     if (!status) VIRTUAL_DEBUG_DUMP_VIEW( view );
 
+    ios_alloc_ec_code = 0;
     server_leave_uninterrupted_section( &virtual_mutex, &sigset );
 
     if (status == STATUS_SUCCESS)
