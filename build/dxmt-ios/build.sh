@@ -17,8 +17,15 @@ OUT_LIB="$BUILD_DIR/libdxmt_unix.a"
 
 mkdir -p "$OBJ_DIR"
 
+# winemetal_unix.c includes "../../../../../build/madeira_cfg.h", written when
+# DXMT lived at research/dxmt. At dxmt/ that path climbs out of the repo. When a
+# quoted include is not found beside the source, clang retries it under each -I
+# directory, so give it one exactly five levels below the repo root.
+CFG_SHIM="$BUILD_DIR/obj/cfg-shim/x"   # build/dxmt-ios/obj/cfg-shim/x: five levels down
+mkdir -p "$CFG_SHIM"
+
 COMMON_FLAGS="-arch arm64 -isysroot $SDK -miphoneos-version-min=18.0 -fblocks -O2"
-INCLUDES="-I$DXMT_ROOT/include -I$DXMT_ROOT/libs -I$DXMT_SRC/winemetal -I$DXMT_SRC/airconv"
+INCLUDES="-I$DXMT_ROOT/include -I$DXMT_ROOT/libs -I$DXMT_SRC/winemetal -I$DXMT_SRC/airconv -I$CFG_SHIM"
 INCLUDES_DIRECTX="-I$DXMT_ROOT/include/native/directx -I$DXMT_ROOT/include/native/windows"
 INCLUDES_SHADERS="-I$BUILD_DIR/shader-headers"
 LLVM_INCLUDES="-I$LLVM_BUILD/include -I$LLVM_SRC/include"
