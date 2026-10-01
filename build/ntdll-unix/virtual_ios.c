@@ -11192,9 +11192,9 @@ static int ios_guest_image_is_host_data( const void *base, size_t size )
  * freezes once gameplay allocates: one run logged 22.7M "[fault-cost] emulated-
  * store" faults, ~96 s of handler time, 99% from one thread, every block RIP in
  * mono.dll. Boehm's Win32 heap is VirtualAlloc(PAGE_EXECUTE_READWRITE) (0x41000
- * and 0x100000 chunks, e.g. 0x7035580000), so mprotect_exec below finds no host
- * exec, carves a JIT-pool slot, remaps it R+X and routes EVERY heap store through
- * the Mach-fault store emulator (~4 us each).
+ * chunks, e.g. 0x7035580000), so mprotect_exec below finds no host exec, carves
+ * a JIT-pool slot, remaps it R+X and routes EVERY heap store through the
+ * Mach-fault store emulator (~4 us each).
  *
  * THE REASONING is ml1030's, and FEX's own (WOW64/Module.cpp, the Bop page):
  * "Executability is FEX's own bookkeeping, not the host page protection." x86
@@ -11210,11 +11210,14 @@ static int ios_guest_image_is_host_data( const void *base, size_t size )
  * is in flight), anything already backed by the JIT pool or an anon-JIT alias is
  * left as it is, and so are images (ml1030 handles those) and file mappings.
  * Small views (< 64 KB) are left alone too, in case a builtin emits a native
- * thunk page without EC_CODE, and so are allocations sized like code chunks
- * (multiples of 64 KB): a first cut converted Mono's JIT code chunks, whose call
- * sites Mono patches with unaligned atomic xchg, and Cuphead's main thread
- * deadlocked right after a burst of those on an armed page. See
- * ios_guest_anon_rwx_is_host_data for the second cut and why it was dropped.
+ * thunk page without EC_CODE.
+ *
+ * CODE CHUNKS STAY ON THE POOL PATH. Guest JIT code is x86 too, but converting
+ * Mono's code chunks was tried on device and deadlocks: Mono patches call sites
+ * with unaligned atomic xchg (FEX emits SWPAL), and on a plain page that FEX has
+ * armed for SMC Cuphead's main thread parked in mono.dll for good right after a
+ * burst of them. So only allocations sized like data are converted; see
+ * ios_guest_anon_rwx_view_ok.
  *
  * MADEIRA_GUEST_RWX_DATA=0 restores the previous behaviour exactly. */
 static int ios_alloc_ec_code;   /* set by allocate_virtual_memory under virtual_mutex */
@@ -11224,6 +11227,9 @@ static int ios_guest_rwx_data_enabled(void)
     static int cached = -1;
     if (cached < 0)
     {
+        /* On by default: a guest's anonymous RWX data heap (Mono's Boehm GC) is
+         * plain read/write memory. 0 maps it through the JIT pool again, with
+         * every store emulated, as before. */
         const char *s = getenv( "MADEIRA_GUEST_RWX_DATA" );
         cached = (s && (*s == '0' || *s == 'n' || *s == 'N')) ? 0 : 1;
     }
@@ -11235,10 +11241,12 @@ static int ios_guest_anon_rwx_view_ok( const struct file_view *view )
     if (!is_view_valloc( view )) return 0;
     if (view->protect & (SEC_IMAGE | VPROT_ARM64EC | VPROT_SYSTEM)) return 0;
     if (view->size < 0x10000) return 0;
-    /* Data, not code: Boehm's Win32 heap chunks are an expansion plus one 4 KB
-     * page (0x41000, 0x81000, ...), never a multiple of 64 KB; Mono's JIT code
-     * chunks are (0x100000). Measured over three Cuphead runs: 15x 0x41000,
-     * 6x 0x100000, 6x 0x1000 (FEX's X64ReturnInstr), nothing else. */
+    /* Data, not code -- a HEURISTIC, by size. Boehm's Win32 heap chunks are an
+     * expansion plus one 4 KB page (0x41000, 0x81000, ...), never a multiple of
+     * 64 KB; Mono's JIT code chunks are (0x100000). Every anonymous RWX request
+     * in three Cuphead runs was one of: 15x 0x41000, 6x 0x100000, 6x 0x1000
+     * (FEX's X64ReturnInstr). Another runtime may size things differently: a
+     * data heap in 64 KB multiples just keeps the old (slow, correct) path. */
     return (view->size & 0xffff) != 0;
 }
 
@@ -11246,17 +11254,18 @@ static int ios_guest_anon_rwx_view_ok( const struct file_view *view )
  * plain memory for its whole life, and anything else keeps the original
  * pool-alias path from birth (the alias-cover check keeps it there).
  *
- * The second cut instead sent a converted page to the pool when FEX armed SMC on
- * it. That moves a page that already holds live code (copy, then vm_remap over
- * it), and a store landing between the two is lost: Cuphead's mono.dll read a
- * pointer out of a just-remapped JIT page as 0x5b18 and faulted, and Unity's
- * crash handler then suspended every thread (audio froze too). A qualifying view
- * that FEX does arm simply follows ml1030: PAGE_EXECUTE_READ -> PROT_READ.
+ * Do NOT turn this into "convert everything, then move a page to the pool when
+ * FEX arms SMC on it". That was tried on device too. It moves a page that
+ * already holds live code (ml634 copy, then vm_remap over it), and a store
+ * landing between the two is lost: Cuphead's mono.dll read a pointer out of a
+ * just-remapped JIT page as 0x5b18 and faulted, and Unity's crash handler then
+ * suspended every thread (audio froze as well). A qualifying view that FEX does
+ * arm simply follows ml1030: PAGE_EXECUTE_READ -> PROT_READ.
  *
  * The range is host-page rounded (16 KB) and so can run past the end of a guest
  * allocation (0x41000 -> 0x44000): every view it touches must qualify, rather
  * than one view having to contain all of it. */
-static int ios_guest_anon_rwx_is_host_data( const void *base, size_t size, int unix_prot )
+static int ios_guest_anon_rwx_is_host_data( const void *base, size_t size )
 {
 #ifdef WINE_IOS
     extern int ios_jit_anon_alias_find_cover(void *, size_t, void **, void **);
@@ -11266,7 +11275,6 @@ static int ios_guest_anon_rwx_is_host_data( const void *base, size_t size, int u
     uintptr_t b = (uintptr_t)base, e = b + size, a, rx = (uintptr_t)ios_jit_rx_base_global;
     int any = 0;
 
-    (void)unix_prot;
     if (!ios_guest_rwx_data_enabled() || ios_alloc_ec_code || !arm64ec_view) return 0;
     if (e <= b) return 0;
     if (rx && e > rx && b < rx + ios_jit_pool_size_global) return 0;
@@ -11339,7 +11347,7 @@ static inline int mprotect_exec( void *base, size_t size, int unix_prot )
         unix_prot &= ~PROT_EXEC;
         if (!unix_prot) unix_prot = PROT_READ;   /* PAGE_EXECUTE alone: readable is the honest answer */
     }
-    else if ((unix_prot & PROT_EXEC) && ios_guest_anon_rwx_is_host_data( base, size, unix_prot ))
+    else if ((unix_prot & PROT_EXEC) && ios_guest_anon_rwx_is_host_data( base, size ))
     {
         static unsigned long grd_n;
         if (++grd_n <= 24 && !ios_in_mach_exc)
