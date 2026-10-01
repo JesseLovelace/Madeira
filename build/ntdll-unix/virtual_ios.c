@@ -1386,16 +1386,14 @@ static int ios_cage_window_tail_live;
 
 /* Give the unclaimed [cage] holdback back to the band when it is exhausted.
  *
- * The holdback is 8 GB of a ~15 GB furniture window, kept for a Chromium V8
- * cage. A session with no Chromium never claims it, and a guest that reserves
- * address space freely (Unity 2022 reserves ~14 GB at startup, almost none of
- * it committed) then fills the rest: a 1 MB thread-stack request fails with the
- * holdback still untouched. Releasing it at that point costs nothing the
- * session was going to use.
+ * The holdback is 8 GB of a ~15 GB furniture window. A session with no
+ * Chromium never claims it, and a guest that reserves address space freely can
+ * fill the rest, so that even a 1 MB request fails. Releasing the holdback then
+ * costs nothing the session was going to use.
  *
- * Off unless MADEIRA_CAGE_RELEASE=1. The app sets that for a Madeira Dock
- * session (headless Steam client, no CEF); madeira.cfg can set it either way.
- * Called with virtual_mutex held. Returns 1 if the range was released. */
+ * Off unless MADEIRA_CAGE_RELEASE=1, which the app sets for a Madeira Dock
+ * session (headless Steam client, no CEF). Called with virtual_mutex held.
+ * Returns 1 if the range was released. */
 static int ios_cage_release_on_exhaustion( size_t want )
 {
     /* 1: when the guest band is exhausted, release the unclaimed 8 GB V8 cage
