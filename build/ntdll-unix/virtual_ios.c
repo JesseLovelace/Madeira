@@ -7123,6 +7123,13 @@ static int ios_wow_addr_in_any_window( const void *addr )
     return 0;
 }
 
+/* The same question for callers outside this file that do not run on a guest
+ * thread (the Mach exception handler). */
+int ios_wow_addr_in_guest_window( const void *addr )
+{
+    return ios_wow_addr_in_any_window( addr );
+}
+
 /* The LIVE window that OWNS the VA at `addr`, or NULL if the address is not
  * inside any live window.
  *
@@ -8312,6 +8319,7 @@ void ios_wow_session_arm(void) { }
 ULONG_PTR ios_wow_base_for_peb( void *peb_id ) { return 0; }
 ULONG_PTR ios_wow_base(void) { return 0; }
 int ios_wow_in_window( const void *addr ) { return 0; }
+int ios_wow_addr_in_guest_window( const void *addr ) { return 0; }
 ULONG ios_wow_guest_addr( const void *host ) { return PtrToUlong( host ); }
 void ios_wow_translate_limits( ULONG_PTR *l, ULONG_PTR *h ) { }
 NTSTATUS ios_wow_window_reserve(void) { return STATUS_NOT_SUPPORTED; }
