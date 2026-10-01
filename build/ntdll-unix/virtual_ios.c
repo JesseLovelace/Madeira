@@ -11210,11 +11210,11 @@ static int ios_guest_image_is_host_data( const void *base, size_t size )
  * is in flight), anything already backed by the JIT pool or an anon-JIT alias is
  * left as it is, and so are images (ml1030 handles those) and file mappings.
  * Small views (< 64 KB) are left alone too, in case a builtin emits a native
- * thunk page without EC_CODE. And a page FEX translates code from goes back to
- * the original path when FEX arms it (see ios_guest_anon_rwx_is_host_data): a
- * first cut converted Mono's JIT code chunks, whose call sites Mono patches with
- * unaligned atomic xchg, and Cuphead's main thread deadlocked right after a burst
- * of those on an armed page.
+ * thunk page without EC_CODE, and so are allocations sized like code chunks
+ * (multiples of 64 KB): a first cut converted Mono's JIT code chunks, whose call
+ * sites Mono patches with unaligned atomic xchg, and Cuphead's main thread
+ * deadlocked right after a burst of those on an armed page. See
+ * ios_guest_anon_rwx_is_host_data for the second cut and why it was dropped.
  *
  * MADEIRA_GUEST_RWX_DATA=0 restores the previous behaviour exactly. */
 static int ios_alloc_ec_code;   /* set by allocate_virtual_memory under virtual_mutex */
@@ -11234,20 +11234,28 @@ static int ios_guest_anon_rwx_view_ok( const struct file_view *view )
 {
     if (!is_view_valloc( view )) return 0;
     if (view->protect & (SEC_IMAGE | VPROT_ARM64EC | VPROT_SYSTEM)) return 0;
-    return view->size >= 0x10000;
+    if (view->size < 0x10000) return 0;
+    /* Data, not code: Boehm's Win32 heap chunks are an expansion plus one 4 KB
+     * page (0x41000, 0x81000, ...), never a multiple of 64 KB; Mono's JIT code
+     * chunks are (0x100000). Measured over three Cuphead runs: 15x 0x41000,
+     * 6x 0x100000, 6x 0x1000 (FEX's X64ReturnInstr), nothing else. */
+    return (view->size & 0xffff) != 0;
 }
 
-/* `unix_prot` is the request. Only a WRITABLE request converts: FEX arms its SMC
- * trap on a page it has translated code from with PAGE_EXECUTE_READ, and such a
- * page (Mono's JIT code chunks, which it also patches with unaligned atomic
- * xchg) is left to the original pool-alias path from then on -- the
- * alias-cover check below keeps it there. A converted page that later becomes
- * pool-backed this way loses nothing: that path copies the bytes before it
- * remaps. Pure data (the GC heap) is never armed and stays plain memory.
+/* Decided once per allocation and never revisited: a view that qualifies is
+ * plain memory for its whole life, and anything else keeps the original
+ * pool-alias path from birth (the alias-cover check keeps it there).
  *
- * The range is host-page rounded (16 KB) and so can run past the end of a
- * guest allocation (Boehm's chunks are 0x41000): every view it touches must
- * qualify, rather than one view having to contain all of it. */
+ * The second cut instead sent a converted page to the pool when FEX armed SMC on
+ * it. That moves a page that already holds live code (copy, then vm_remap over
+ * it), and a store landing between the two is lost: Cuphead's mono.dll read a
+ * pointer out of a just-remapped JIT page as 0x5b18 and faulted, and Unity's
+ * crash handler then suspended every thread (audio froze too). A qualifying view
+ * that FEX does arm simply follows ml1030: PAGE_EXECUTE_READ -> PROT_READ.
+ *
+ * The range is host-page rounded (16 KB) and so can run past the end of a guest
+ * allocation (0x41000 -> 0x44000): every view it touches must qualify, rather
+ * than one view having to contain all of it. */
 static int ios_guest_anon_rwx_is_host_data( const void *base, size_t size, int unix_prot )
 {
 #ifdef WINE_IOS
@@ -11258,8 +11266,9 @@ static int ios_guest_anon_rwx_is_host_data( const void *base, size_t size, int u
     uintptr_t b = (uintptr_t)base, e = b + size, a, rx = (uintptr_t)ios_jit_rx_base_global;
     int any = 0;
 
+    (void)unix_prot;
     if (!ios_guest_rwx_data_enabled() || ios_alloc_ec_code || !arm64ec_view) return 0;
-    if (!(unix_prot & PROT_WRITE) || e <= b) return 0;
+    if (e <= b) return 0;
     if (rx && e > rx && b < rx + ios_jit_pool_size_global) return 0;
     if (ios_jit_anon_alias_find_cover( (void *)base, size, &cov_rw, &cov_rx )) return 0;
     for (a = b; a < e; )
