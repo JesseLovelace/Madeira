@@ -17,8 +17,21 @@ OUT_LIB="$BUILD_DIR/libdxmt_unix.a"
 
 mkdir -p "$OBJ_DIR"
 
+# DXMT's winemetal sources reach outside the submodule with paths written for
+# its old home at research/dxmt: "../../../../../build/madeira_cfg.h" and
+# "../../../../remote-metal/...". Since the reorganization moved it to dxmt/,
+# both climb to the wrong place. When a quoted include is not found beside its
+# source, clang retries it under each -I directory, so recreate the old layout
+# here (links to the real build/ and research/remote-metal) and add the old
+# position of src/winemetal/unix as an include directory.
+OLD_LAYOUT="$OBJ_DIR/old-layout"
+mkdir -p "$OLD_LAYOUT/research/dxmt/src/winemetal/unix"
+ln -sfn "$REPO_ROOT/build" "$OLD_LAYOUT/build"
+ln -sfn "$REPO_ROOT/research/remote-metal" "$OLD_LAYOUT/research/remote-metal"
+OLD_LAYOUT_INC="$OLD_LAYOUT/research/dxmt/src/winemetal/unix"
+
 COMMON_FLAGS="-arch arm64 -isysroot $SDK -miphoneos-version-min=18.0 -fblocks -O2"
-INCLUDES="-I$DXMT_ROOT/include -I$DXMT_ROOT/libs -I$DXMT_SRC/winemetal -I$DXMT_SRC/airconv"
+INCLUDES="-I$DXMT_ROOT/include -I$DXMT_ROOT/libs -I$DXMT_SRC/winemetal -I$DXMT_SRC/airconv -I$OLD_LAYOUT_INC"
 INCLUDES_DIRECTX="-I$DXMT_ROOT/include/native/directx -I$DXMT_ROOT/include/native/windows"
 INCLUDES_SHADERS="-I$BUILD_DIR/shader-headers"
 LLVM_INCLUDES="-I$LLVM_BUILD/include -I$LLVM_SRC/include"
