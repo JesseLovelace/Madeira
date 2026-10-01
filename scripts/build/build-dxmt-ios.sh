@@ -13,7 +13,22 @@ fi
 # call this repeatedly; xcodebuild returns immediately when already installed.
 xcodebuild -downloadComponent MetalToolchain >/dev/null 2>&1 || true
 
-"$BUILD/build.sh"
+if ! "$BUILD/build.sh"; then
+  # build.sh only prints OK/FAILED per object and leaves the compiler output in
+  # obj/<name>.err. Show it, and in GitHub Actions also raise it as an
+  # annotation so it is visible on the run summary and through the API.
+  for err in "$BUILD"/obj/*.err; do
+    grep -q "error:" "$err" 2>/dev/null || continue
+    name="$(basename "$err" .err)"
+    echo "----- $name: compiler errors -----"
+    grep -B2 -A6 "error:" "$err" | head -80
+    if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+      msg="$(grep -B2 -A6 "error:" "$err" | head -30 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')"
+      echo "::error title=DXMT compile failed ($name)::$msg"
+    fi
+  done
+  exit 1
+fi
 
 shopt -s nullglob
 objs=("$BUILD"/obj/*.o)
