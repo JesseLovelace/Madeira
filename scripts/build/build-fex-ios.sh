@@ -19,8 +19,6 @@ fi
 # fex-ios.patch makes the pinned FEX compile and link for this target:
 # - Arm64.cpp: IosLogUnimplementedCASPAL dumps a Win32 VirtualQuery region;
 #   keep the log line, drop the dump.
-# - AllocatorHooks.cpp: IOS_RPM_GUARD() is used in the ENABLE_FEX_ALLOCATOR=OFF
-#   branch but only defined when the allocator is on; it is a no-op there.
 # - Core.cpp: the [ffs-bypass]/[cb-entry] reporters read counters declared only
 #   under FEX_IOS_HOST, and rpm_cas_snapshot_take lives in FEX's rpmalloc fork,
 #   which is not linked with the allocator off (weak stub, reports nothing).
