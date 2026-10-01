@@ -20,6 +20,7 @@
 #include <dirent.h>
 #include "../../build/madeira_cfg.h"   /* ml1095: one config file */
 #include <sys/stat.h>
+#include <pwd.h>
 #include <limits.h>
 #include <string.h>
 #include <stdio.h>
@@ -281,6 +282,50 @@ static void madeira_undo_appdata_skeleton(NSString *prefix)
 }
 
 
+/* ---- LocalLow for the user Wine actually runs as ------------------------
+ *
+ * Wine names the profile after $USER, else the passwd entry (ntdll
+ * set_home_dir), which on a device is "mobile". The template's profile is
+ * "mythic" and madeira_repair_profile() builds its skeleton under "madeira",
+ * so nothing creates C:\users\mobile\AppData\LocalLow, and Wine's profile
+ * population does not create it either (it is a known folder with no CSIDL
+ * creation path). Without it SHGetKnownFolderPath(FOLDERID_LocalAppDataLow)
+ * fails with 0x80070003 (cryptnet logs "Failed to get LocalAppDataLow path"),
+ * and Unity, which keeps Player.log and persistentDataPath there, has been
+ * seen to overflow its main thread's stack in path lookups at startup.
+ *
+ * Only LocalLow is created, and only once AppData exists: pre-creating
+ * Roaming stops Wine's own population (see ml581 above). */
+static void madeira_ensure_locallow(NSString *prefix)
+{
+    const char *name = getenv( "USER" );
+    if (!name)
+    {
+        struct passwd *pwd = getpwuid( getuid() );
+        name = pwd ? pwd->pw_name : NULL;
+    }
+    if (!name) name = "wine";
+    const char *p;
+    if ((p = strrchr( name, '/' ))) name = p + 1;
+    if ((p = strrchr( name, '\\' ))) name = p + 1;
+    if (!*name || !strcmp( name, "." ) || !strcmp( name, ".." )) return;
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *appdata = [prefix stringByAppendingPathComponent:
+                         [NSString stringWithFormat:@"drive_c/users/%s/AppData", name]];
+    BOOL isDir = NO;
+    if (![fm fileExistsAtPath:appdata isDirectory:&isDir] || !isDir) return;
+
+    NSString *locallow = [appdata stringByAppendingPathComponent:@"LocalLow"];
+    if ([fm fileExistsAtPath:locallow]) return;
+    NSError *err = nil;
+    if ([fm createDirectoryAtPath:locallow withIntermediateDirectories:NO attributes:nil error:&err])
+        LOG( "profile: created %{public}s", locallow.UTF8String );
+    else
+        LOG( "profile: could not create %{public}s: %{public}@", locallow.UTF8String, err );
+}
+
+
 // Wine's main entry point (from ntdll unix loader.c, statically linked)
 extern void __wine_main(int argc, char *argv[]);
 
@@ -402,6 +447,7 @@ void madeira_seed_prefix_if_needed(const char *prefix_path) {
         madeira_repair_profile( prefix );
         /* ml581: see madeira_undo_appdata_skeleton() above. */
         madeira_undo_appdata_skeleton( prefix );
+        madeira_ensure_locallow( prefix );
     }
 }
 
