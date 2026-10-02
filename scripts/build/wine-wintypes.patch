@@ -1,0 +1,17 @@
+diff --git a/dlls/wintypes/main.c b/dlls/wintypes/main.c
+index 287e5992..98932d69 100644
+--- a/dlls/wintypes/main.c
++++ b/dlls/wintypes/main.c
+@@ -28,7 +28,11 @@ static const struct
+ }
+ present_contracts[] =
+ {
+-    { L"Windows.Foundation.UniversalApiContract", 10, },
++    /* Madeira: the pad reaches games through XInput only; windows.gaming.input
++     * finds devices through HID and sees none. Report a contract older than the
++     * one input libraries require for Windows.Gaming.Input (7) so they keep to
++     * XInput. */
++    { L"Windows.Foundation.UniversalApiContract", 6, },
+ };
+ 
+ static BOOLEAN is_api_contract_present( const HSTRING hname, unsigned int version )

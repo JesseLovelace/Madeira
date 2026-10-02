@@ -15,6 +15,12 @@ export PATH="$MINGW:$PATH"
 
 [[ -f "$TREE/Makefile" ]] || { echo "ERROR: $TREE is not configured (run build-wine.sh first)" >&2; exit 1; }
 
+# wine-wintypes.patch: see the comment it adds.
+PATCH="$ROOT/scripts/build/wine-wintypes.patch"
+if ! git -C "$ROOT/wine" apply --reverse --check "$PATCH" 2>/dev/null; then
+  git -C "$ROOT/wine" apply "$PATCH"
+fi
+
 for module in wintypes; do
   target="dlls/$module/arm64ec-windows/$module.dll"
   if ! make -C "$TREE" -j"$JOBS" "$target" >"$LOG" 2>&1 || [[ ! -s "$TREE/$target" ]]; then
