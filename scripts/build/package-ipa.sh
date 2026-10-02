@@ -36,7 +36,15 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGN_IDENTITY='' \
-  build
+  build 2>&1 | tee "$DIST/xcodebuild.log" || {
+    # Compiler errors as annotations: job logs are not always readable through the API.
+    if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+      grep -E "\.(swift|m|mm|c|h):[0-9]+:[0-9]+: error:" "$DIST/xcodebuild.log" | sort -u | head -20 | while IFS= read -r line; do
+        echo "::error title=App compile error::${line##*/app/Madeira/}"
+      done
+    fi
+    exit 1
+  }
 
 [[ -d "$APP" ]] || { echo "ERROR: xcodebuild succeeded but Madeira.app is missing" >&2; exit 1; }
 

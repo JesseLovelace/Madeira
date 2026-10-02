@@ -54,6 +54,8 @@ enum SteamServiceMethod: String {
     case getCDNAuthToken = "ContentServerDirectory.GetCDNAuthToken#1"
     /// The account's own playtime and last-played times.
     case getOwnedGames = "Player.GetOwnedGames#1"
+    /// The account's Steam Cloud file list for one app.
+    case cloudGetAppFileChangelist = "Cloud.GetAppFileChangelist#1"
 }
 
 // MARK: - Result codes

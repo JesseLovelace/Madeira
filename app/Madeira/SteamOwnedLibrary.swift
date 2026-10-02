@@ -372,8 +372,59 @@ final class SteamOwnedLibrary: ObservableObject {
             try? FileManager.default.createDirectory(at: Self.supportFolder, withIntermediateDirectories: true)
             try? JSONEncoder().encode(parsed).write(to: Self.playtimeURL, options: .atomic)
             SteamLog.event("[steam-playtime] apps=\(parsed.count)")
+            await auditCloudSaves()
         } catch {
             SteamLog.event("[steam-playtime] unavailable reason=\(Self.reason(error))")
+        }
+    }
+
+    // MARK: Steam Cloud (stage 1: read-only)
+
+    private var cloudAudited = false
+
+    /// Once per app run, for each installed Steam game: asks Steam for the
+    /// account's cloud save list and logs how it compares with the files in
+    /// the prefix. Reads only; `env.MADEIRA_STEAM_CLOUD = 0` turns it off.
+    private func auditCloudSaves() async {
+        guard !cloudAudited, !inSession, SteamSignIn.flag("MADEIRA_STEAM_CLOUD", default: true) else { return }
+        cloudAudited = true
+        let drive = Self.drive
+        guard let userFolder = SteamCloudPaths.userFolder(drive: drive) else {
+            SteamLog.event("[steam-cloud] skipped reason=no-user-folder"); return
+        }
+        let games = SteamGamesModel.shared.games.filter(\.installed).prefix(40)
+        SteamLog.event("[steam-cloud] audit games=\(games.count)")
+        for game in games {
+            guard !inSession, game.id > 0, game.id <= Int(UInt32.max) else { break }
+            do {
+                try await session.ensureConnected()
+                let steamID = session.steamID
+                guard let info = try await fetcher.fetchAppInfo(appID: UInt32(game.id)) else { continue }
+                var request = ProtobufEncoder()
+                request.writeUInt32(fieldNumber: 1, value: UInt32(game.id))    // appid
+                request.writeUInt64(fieldNumber: 2, value: 0)                  // synced_change_number: the whole list
+                let listing = try SteamCloudListing.parse(
+                    try await session.callServiceMethod(method: .cloudGetAppFileChangelist, body: request.data, timeout: 20))
+                let paths = SteamCloudPaths(
+                    drive: drive, userFolder: userFolder,
+                    installFolder: drive.appendingPathComponent(game.library + "/common/" + game.installDir, isDirectory: true),
+                    remoteFolder: MadeiraDock.clientRoot.appendingPathComponent("userdata/\(steamID & 0xFFFF_FFFF)/\(game.id)/remote", isDirectory: true),
+                    steamID: steamID, overrides: info.rootOverrides)
+                let saveFiles = info.saveFiles
+                let audit = await Task.detached(priority: .utility) {
+                    SteamCloudAudit.run(listing: listing, saveFiles: saveFiles, paths: paths)
+                }.value
+                let roots = Set(saveFiles.map(\.root)).sorted().joined(separator: ",")
+                SteamLog.event("[steam-cloud] app=\(game.id) \(audit.summary) patterns=\(saveFiles.count) roots=\(roots.isEmpty ? "-" : roots) overrides=\(info.rootOverrides.count)")
+                for item in audit.differ.prefix(6) {
+                    SteamLog.event("[steam-cloud] app=\(game.id) differ \(item.path) cloud=\(item.cloudSize)B@\(item.cloudTime) local=\(item.localSize)B@\(item.localTime) newer=\(item.localTime > item.cloudTime ? "local" : "cloud")")
+                }
+                for path in audit.missingLocal.prefix(6) { SteamLog.event("[steam-cloud] app=\(game.id) cloud-only \(path)") }
+                for path in audit.localOnly.prefix(6) { SteamLog.event("[steam-cloud] app=\(game.id) local-only \(path)") }
+                for path in audit.unmapped.prefix(6) { SteamLog.event("[steam-cloud] app=\(game.id) unmapped \(path)") }
+            } catch {
+                SteamLog.event("[steam-cloud] app=\(game.id) failed reason=\(Self.reason(error))")
+            }
         }
     }
 
