@@ -2272,6 +2272,7 @@ struct LibraryDetail: View {
                 // How a Steam game starts sits under its library details (SteamGames.swift).
                 if entry.steamAppID != nil {
                     SteamEntrySection(entry: $entry) { leaving = true; dismiss() }
+                    if let appID = entry.steamAppID { SteamCloudSection(appID: appID) }
                 }
                 Section("Display") {
                     // The Windows screen the game renders for (and the Desktop's size).

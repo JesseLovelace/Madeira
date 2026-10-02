@@ -28,10 +28,19 @@ bash "$ROOT/tools/check-prefix-template.sh" "$ROOT/app/Madeira/prefix-template.t
 
 # Madeira Dock: without app/Madeira/arm64ec-windows/dockhost.exe the app hides
 # Dock (docs/MADEIRA_DOCK.md). Uses llvm-mingw from the step above.
+# madeira-dock.patch: a short, settable wait before Dock first asks Valve's
+# client whether the account owns the game (it was a fixed 5 s).
+if ! git -C "$ROOT/madeira-dock" apply --reverse --check "$ROOT/scripts/build/madeira-dock.patch" 2>/dev/null; then
+  git -C "$ROOT/madeira-dock" apply "$ROOT/scripts/build/madeira-dock.patch"
+fi
 log "Building Madeira Dock (dockhost.exe)"
 "$ROOT/build/madeira-dock/build.sh"
 
+log "Building the native D3D12 layer (madeira_d3d12.dll)"
+"$ROOT/scripts/build/build-madeira-d3d12-pe.sh"
+
 "$ROOT/scripts/build/build-wine.sh"
+"$ROOT/scripts/build/build-wine-pe-extra.sh"
 "$ROOT/scripts/build/build-fex-ios.sh"
 "$ROOT/scripts/build/build-freetype-ios.sh"
 

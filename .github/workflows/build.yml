@@ -5,7 +5,7 @@ on:
   pull_request:
   workflow_dispatch:
 
-# LLVM, FEX and the i386 Windows DLLs are the slow stages (hours on a hosted runner), so they build in
+# LLVM, FEX (iOS library and WoW64 module) and the i386 Windows DLLs are the slow stages (hours on a hosted runner), so they build in
 # parallel jobs whose trimmed outputs are cached; the app job restores them and
 # runs scripts/build-ipa.sh, which skips any stage whose output already exists.
 # xcode-27: the ntdll unix side uses iOS 27 SDK fields (rusage_info_v6.ri_page_wait_time_mach).
@@ -53,6 +53,27 @@ jobs:
           git submodule update --init --recursive --depth 1 FEX
           scripts/build/build-fex-ios.sh
 
+  fexwow64:
+    runs-on: xcode-27
+    timeout-minutes: 360
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: key
+        run: echo "key=fex-wow64-$(git rev-parse HEAD:FEX)-${{ hashFiles('scripts/build/build-fex-wow64.sh', 'scripts/build/fex-wow64.patch', 'build/fex-wow64/build.sh', 'scripts/build/setup-llvm-mingw.sh') }}" >> "$GITHUB_OUTPUT"
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          key: ${{ steps.key.outputs.key }}
+          path: app/Madeira/aarch64-windows/xtajit.dll
+      - name: Build the FEX WoW64 module
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          brew install ninja || true
+          git submodule update --init --recursive --depth 1 FEX
+          scripts/build/build-fex-wow64.sh
+
   i386:
     runs-on: xcode-27
     timeout-minutes: 360
@@ -84,7 +105,7 @@ jobs:
         run: tail -150 wine/build-i386/madeira-i386-build.log || true
 
   app:
-    needs: [llvm, fex, i386]
+    needs: [llvm, fex, fexwow64, i386]
     runs-on: xcode-27
     timeout-minutes: 360
     steps:
@@ -106,6 +127,11 @@ jobs:
           path: |
             FEX/build-ios
             !FEX/build-ios/**/*.o
+      - uses: actions/cache/restore@v4
+        with:
+          key: ${{ needs.fexwow64.outputs.key }}
+          fail-on-cache-miss: true
+          path: app/Madeira/aarch64-windows/xtajit.dll
       - uses: actions/cache/restore@v4
         with:
           key: ${{ needs.i386.outputs.key }}

@@ -2438,6 +2438,15 @@ struct ContentView: View {
             } else {
                 unsetenv("MADEIRA_DOCK_SESSION")
             }
+            // A Dock session runs Valve's client headless, with no Chromium, so
+            // nothing claims the 8 GB V8 cage holdback (virtual_ios.c). Let ntdll
+            // release it when the guest band runs out. madeira.cfg
+            // env.MADEIRA_CAGE_RELEASE, exported later, wins.
+            if dockLaunch.dock {
+                setenv("MADEIRA_CAGE_RELEASE", "1", 1)
+            } else {
+                unsetenv("MADEIRA_CAGE_RELEASE")
+            }
             var poolSizeMB = DockPerformancePolicy.sessionPoolMB(standard: 896, dock: dockLaunch.dock, compact: dockLaunch.compact)
             if poolSizeMB != 896 { logStore.log("[dock-pool] compact JIT pool \(poolSizeMB)MB for this Dock launch") }
             // madeira.cfg pool: the JIT pool size in MB (256 to 1152) for every launch; wins over the size above.
@@ -2816,8 +2825,18 @@ struct ContentView: View {
             self.startWineserver()
             winios_phase("wineserver-up")
 
-            // Step 3: Start Wine (debugger still attached for PE loading BRK calls)
-            Thread.sleep(forTimeInterval: 2.0)
+            // Step 3: Start Wine once the server accepts connections. This used to be a
+            // fixed 2 s pause; the server is normally listening within milliseconds.
+            // env.MADEIRA_FAST_SERVER_START = 0 restores the fixed pause.
+            if SteamSignIn.flag("MADEIRA_FAST_SERVER_START", default: true) {
+                let waitStart = CFAbsoluteTimeGetCurrent()
+                while wineserver_is_listening() == 0, CFAbsoluteTimeGetCurrent() - waitStart < 2.0 {
+                    Thread.sleep(forTimeInterval: 0.01)
+                }
+                logStore.log(String(format: "[launch] wineserver listening after %.0f ms", (CFAbsoluteTimeGetCurrent() - waitStart) * 1000))
+            } else {
+                Thread.sleep(forTimeInterval: 2.0)
+            }
             winios_phase("wine-start")
             self.startWineProcess()
 

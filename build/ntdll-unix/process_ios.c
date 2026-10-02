@@ -443,7 +443,12 @@ static void *ios_child_thread_entry( void *arg )
 {
     struct ios_child_args *args = arg;
 
-    ios_child_main_machine = args->pe_info.machine;
+    /* An IL-only .NET image without 32BITREQUIRED runs as a native process: the
+     * server and exec_wineloader both promote it, so it must not get a guest
+     * window either.  With one, the process is 64-bit to everyone but lives in
+     * 32-bit furniture, and wow64.dll faults on the PEB32 nobody built. */
+    ios_child_main_machine = (args->pe_info.image_flags & IMAGE_FLAGS_ComPlusNativeReady)
+                             ? native_machine : args->pe_info.machine;
 
     /* Use dprintf for early logging — ERR requires TEB which isn't set up yet */
     dprintf(STDERR_FILENO, "[Wine child thread] ENTRY: fd=%d, argc=%d, exe=%s\n",
@@ -1382,7 +1387,8 @@ NTSTATUS WINAPI NtCreateUserProcess( HANDLE *process_handle_ptr, HANDLE *thread_
     }
 #ifdef WINE_IOS
     /* a 32-bit child is about to need a guest window (see ios_wow_session_arm) */
-    if (machine == IMAGE_FILE_MACHINE_I386) ios_wow_session_arm();
+    if (machine == IMAGE_FILE_MACHINE_I386 && !(pe_info.image_flags & IMAGE_FLAGS_ComPlusNativeReady))
+        ios_wow_session_arm();
 #endif
     if (!(startup_info = create_startup_info( attr.ObjectName, process_flags, params, &pe_info, &startup_info_size )))
         goto done;
@@ -2397,6 +2403,12 @@ void fill_vm_counters( VM_COUNTERS_EX *pvmi, int unix_pid )
 /**********************************************************************
  *           NtQueryInformationProcess  (NTDLL.@)
  */
+/* Wine-private class, next after ProcessWineIosWowGuestBase (1010).  Spelled
+ * out here because its only caller, the FEX WoW64 module, does not build
+ * against Wine's headers either. */
+#define ProcessWineIosMonoBridge ((PROCESSINFOCLASS)1011)
+extern NTSTATUS unixcall_ios_mono_bridge_ptr( void *args );
+
 NTSTATUS WINAPI NtQueryInformationProcess( HANDLE handle, PROCESSINFOCLASS class, void *info,
                                            ULONG size, ULONG *ret_len )
 {
@@ -2778,6 +2790,22 @@ NTSTATUS WINAPI NtQueryInformationProcess( HANDLE handle, PROCESSINFOCLASS class
             }
             SERVER_END_REQ;
             if (!ret) *(ULONG_PTR *)info = val;
+        }
+        break;
+
+    /* Address of the Mono backpatcher bridge (ios_mono_bridge.h), for the FEX
+     * WoW64 module.  The 64-bit FEX module receives the same pointer from ntdll
+     * at process init; a 32-bit process's CPU backend is loaded by wow64.dll,
+     * which has no unix call for it, so it asks here instead. */
+    case ProcessWineIosMonoBridge:
+        len = sizeof(ULONG_PTR);
+        if (size != len) return STATUS_INFO_LENGTH_MISMATCH;
+        if (handle != GetCurrentProcess()) return STATUS_INVALID_PARAMETER;
+        else
+        {
+            ULONG64 bridge = 0;
+            unixcall_ios_mono_bridge_ptr( &bridge );
+            *(ULONG_PTR *)info = bridge;
         }
         break;
 
