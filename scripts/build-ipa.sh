@@ -31,6 +31,9 @@ bash "$ROOT/tools/check-prefix-template.sh" "$ROOT/app/Madeira/prefix-template.t
 log "Building Madeira Dock (dockhost.exe)"
 "$ROOT/build/madeira-dock/build.sh"
 
+log "Building the native D3D12 layer (madeira_d3d12.dll)"
+"$ROOT/scripts/build/build-madeira-d3d12-pe.sh"
+
 "$ROOT/scripts/build/build-wine.sh"
 "$ROOT/scripts/build/build-fex-ios.sh"
 "$ROOT/scripts/build/build-freetype-ios.sh"
