@@ -389,11 +389,12 @@ final class SteamOwnedLibrary: ObservableObject {
         guard !cloudAudited, !inSession, SteamSignIn.flag("MADEIRA_STEAM_CLOUD", default: true) else { return }
         cloudAudited = true
         let drive = Self.drive
-        guard let userFolder = SteamCloudPaths.userFolder(drive: drive) else {
+        guard let user = SteamCloudPaths.userFolder(drive: drive) else {
             SteamLog.event("[steam-cloud] skipped reason=no-user-folder"); return
         }
+        let userFolder = user.url
         let games = SteamGamesModel.shared.games.filter(\.installed).prefix(40)
-        SteamLog.event("[steam-cloud] audit games=\(games.count)")
+        SteamLog.event("[steam-cloud] audit games=\(games.count) user-folders=\(user.candidates) chosen-by=\(user.how)")
         for game in games {
             guard !inSession, game.id > 0, game.id <= Int(UInt32.max) else { break }
             do {

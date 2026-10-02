@@ -94,13 +94,26 @@ struct SteamCloudPaths: Sendable {
     var steamID: UInt64
     var overrides: [SteamAppInfo.RootOverride]
 
-    /// The Windows user folder of the prefix: the one folder under users that
-    /// is not Public. nil when the prefix has none yet.
-    static func userFolder(drive: URL) -> URL? {
+    /// The Windows user folder games write to. A prefix can hold several
+    /// folders under users (the template's, earlier builds'); Wine names the
+    /// live one after $USER, else the passwd name, so those are tried first,
+    /// then the most recently changed. nil when the prefix has none yet.
+    static func userFolder(drive: URL) -> (url: URL, candidates: Int, how: String)? {
         let users = drive.appendingPathComponent("users", isDirectory: true)
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: users.path) else { return nil }
-        let own = names.filter { !$0.hasPrefix(".") && $0.caseInsensitiveCompare("Public") != .orderedSame }.sorted()
-        return own.first.map { users.appendingPathComponent($0, isDirectory: true) }
+        let own = names.filter { !$0.hasPrefix(".") && $0.caseInsensitiveCompare("Public") != .orderedSame }
+        func find(_ name: String?) -> URL? {
+            guard let name, let match = own.first(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) else { return nil }
+            return users.appendingPathComponent(match, isDirectory: true)
+        }
+        if let url = find(getenv("USER").map { String(cString: $0) }) { return (url, own.count, "env") }
+        if let entry = getpwuid(getuid()), let url = find(String(cString: entry.pointee.pw_name)) { return (url, own.count, "passwd") }
+        func changed(_ name: String) -> Date {
+            let appData = users.appendingPathComponent(name + "/AppData", isDirectory: true)
+            return (try? appData.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+        }
+        guard let newest = own.max(by: { changed($0) < changed($1) }) else { return nil }
+        return (users.appendingPathComponent(newest, isDirectory: true), own.count, "newest")
     }
 
     /// The local folder a Steam root name stands for on Windows, or nil for a
@@ -213,6 +226,9 @@ struct SteamCloudAudit: Sendable {
         return (UInt64(max(0, values.fileSize ?? 0)), UInt64(max(0, values.contentModificationDate?.timeIntervalSince1970 ?? 0)))
     }
 
+    /// One spelling per file, whatever route led to it and whatever its case.
+    private static func key(_ url: URL) -> String { url.resolvingSymlinksInPath().path.lowercased() }
+
     /// Compares the listing with the prefix. Reads files; changes nothing.
     static func run(listing: SteamCloudListing, saveFiles: [SteamAppInfo.SaveFile], paths: SteamCloudPaths) -> SteamCloudAudit {
         var audit = SteamCloudAudit()
@@ -222,7 +238,7 @@ struct SteamCloudAudit: Sendable {
             audit.cloudFiles += 1
             guard let place = paths.location(cloudPath: file.path) else { audit.unmapped.append(file.path); continue }
             let url = SteamCloudPaths.resolve(base: place.base, parts: place.parts)
-            known.insert(url.path.lowercased())
+            known.insert(key(url))
             guard let local = attributes(url) else { audit.missingLocal.append(file.path); continue }
             if local.size == file.size, sha1(of: url) == file.sha {
                 audit.same += 1
@@ -250,9 +266,11 @@ struct SteamCloudAudit: Sendable {
                 if visited > 5_000 { break }
                 guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true,
                       fnmatch(folder.pattern, url.lastPathComponent, FNM_CASEFOLD) == 0 else { continue }
-                let key = url.path.lowercased()
-                guard !known.contains(key), seen.insert(key).inserted else { continue }
-                let relative = url.path.dropFirst(folder.url.path.count).drop { $0 == "/" }
+                let fileKey = key(url)
+                guard !known.contains(fileKey), seen.insert(fileKey).inserted else { continue }
+                // Both resolved: the enumerator may spell the same folder differently (/private/var).
+                let relative = url.resolvingSymlinksInPath().path
+                    .dropFirst(folder.url.resolvingSymlinksInPath().path.count).drop { $0 == "/" }
                 audit.localOnly.append(folder.label + "/" + String(relative))
             }
         }
