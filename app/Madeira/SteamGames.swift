@@ -494,6 +494,14 @@ struct SteamGamesSection: View {
                     if SteamGamesRules.showsSignIn(library: libraryEnabled, signedIn: steam.signedIn) {
                         SteamSignInCard { showSignIn = true }
                     }
+                    // Saves that differ on the two sides wait for a choice on the game's page.
+                    // A line here, not an alert: an alert would close a page that is open.
+                    if SteamOwnedLibrary.cloudEnabled, !steam.cloudUndecided.isEmpty {
+                        let names = steam.cloudUndecided.compactMap { id in model.games.first { $0.id == id }?.name }
+                        Label("Steam Cloud: \(names.joined(separator: ", ")) \(names.count == 1 ? "has" : "have") saves that differ from this device's. Open the game's details to choose which to keep.",
+                              systemImage: "exclamationmark.icloud")
+                            .font(.footnote).foregroundStyle(.orange)
+                    }
                     if hideInstalled && collapsible {
                         EmptyView()
                     } else if !groups.downloading.isEmpty || !installed.isEmpty {
@@ -1052,6 +1060,9 @@ struct SteamCloudSection: View {
             }
         }
         if same > 0 { LabeledContent("Same on both", value: "\(same)") }
+        if let problem = state.problem {
+            Text(problem).font(.callout).foregroundStyle(.orange)
+        }
         if let last = state.lastDownload, last.files > 0 {
             Text("Downloaded \(Self.saves(last.files))."
                  + (last.backedUp > 0 ? " \(Self.saves(last.backedUp)) replaced on this device \(last.backedUp == 1 ? "was" : "were") backed up." : ""))

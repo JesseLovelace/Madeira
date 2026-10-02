@@ -635,10 +635,12 @@ struct SteamCloudState: Equatable, Sendable {
     var lastDownload: (files: Int, backedUp: Int)?
     /// How many files the last upload sent.
     var lastUpload: Int?
+    /// Why the last download or upload stopped, shown on the game's page.
+    var problem: String?
 
     static func == (a: SteamCloudState, b: SteamCloudState) -> Bool {
         a.phase == b.phase && a.audit == b.audit && a.checked == b.checked && a.conflicts == b.conflicts
-            && a.lastUpload == b.lastUpload
+            && a.lastUpload == b.lastUpload && a.problem == b.problem
             && a.lastDownload?.files == b.lastDownload?.files && a.lastDownload?.backedUp == b.lastDownload?.backedUp
     }
 }

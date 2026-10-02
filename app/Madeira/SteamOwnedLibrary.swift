@@ -430,16 +430,15 @@ final class SteamOwnedLibrary: ObservableObject {
         cloudAudited = true
         let games = SteamGamesModel.shared.games.filter(\.installed).prefix(40)
         SteamLog.event("[steam-cloud] sync games=\(games.count) automatic=\(Self.cloudAutomatic ? 1 : 0)")
-        var undecided: [String] = []
         for game in games {
             guard !inSession else { break }
             await syncCloud(game.id)
-            if !(cloud[game.id]?.conflicts.isEmpty ?? true) { undecided.append(game.name) }
-        }
-        if !undecided.isEmpty, error == nil {
-            error = "Steam Cloud: \(undecided.joined(separator: ", ")) \(undecided.count == 1 ? "has" : "have") saves that differ between this device and Steam Cloud. Nothing was changed. Open the game's details page to choose which saves to keep."
         }
     }
+
+    /// App IDs of the games whose saves need the user's choice. The library
+    /// says so in its Steam section; an alert would close an open game page.
+    var cloudUndecided: [Int] { cloud.filter { !$0.value.conflicts.isEmpty }.keys.sorted() }
 
     /// What a cloud operation on one game needs: the app's save configuration
     /// and where its folders are in the prefix.
@@ -545,7 +544,7 @@ final class SteamOwnedLibrary: ObservableObject {
     /// replaces is backed up first. Returns whether any file arrived.
     private func download(_ appID: Int, _ wanted: [SteamCloudEntry]) async -> Bool {
         guard Self.cloudEnabled, signedIn, !inSession, var state = cloud[appID], !wanted.isEmpty else { return false }
-        state.phase = .downloading(done: 0, of: wanted.count); cloud[appID] = state
+        state.phase = .downloading(done: 0, of: wanted.count); state.problem = nil; cloud[appID] = state
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         let backup = Self.cloudBackups.appendingPathComponent("\(appID)/\(stamp)", isDirectory: true)
         var done = 0, backedUp = 0
@@ -572,7 +571,7 @@ final class SteamOwnedLibrary: ObservableObject {
             SteamLog.event("[steam-cloud] app=\(appID) downloaded files=\(done) backed-up=\(backedUp)")
         } catch {
             SteamLog.event("[steam-cloud] app=\(appID) download failed after=\(done) reason=\(Self.reason(error))")
-            self.error = "Steam Cloud download stopped: \(SteamSignIn.message(error)) Files already downloaded are in place; nothing else was changed."
+            state.problem = "Steam Cloud download stopped: \(SteamSignIn.message(error)) Saves already downloaded are in place; nothing else was changed."
         }
         recordBaseline(appID, settled: settled)
         state.lastDownload = (done, backedUp); state.phase = .ready; cloud[appID] = state
@@ -593,7 +592,7 @@ final class SteamOwnedLibrary: ObservableObject {
     /// confirms the cloud now holds them.
     private func upload(_ appID: Int, _ wanted: [SteamCloudEntry]) async -> Bool {
         guard Self.cloudEnabled, signedIn, !inSession, var state = cloud[appID], !wanted.isEmpty else { return false }
-        state.phase = .uploading(done: 0, of: wanted.count); cloud[appID] = state
+        state.phase = .uploading(done: 0, of: wanted.count); state.problem = nil; cloud[appID] = state
         var done = 0
         var batchID: UInt64 = 0
         func complete(_ ok: Bool) async {
@@ -662,7 +661,7 @@ final class SteamOwnedLibrary: ObservableObject {
         } catch {
             await complete(false)
             SteamLog.event("[steam-cloud] app=\(appID) upload failed after=\(done) reason=\(Self.reason(error))")
-            self.error = "Steam Cloud upload stopped: \(SteamSignIn.message(error)) This device's saves were not changed."
+            state.problem = "Steam Cloud upload stopped: \(SteamSignIn.message(error)) This device's saves were not changed."
         }
         state.lastUpload = done; state.phase = .ready; cloud[appID] = state
         return done > 0
