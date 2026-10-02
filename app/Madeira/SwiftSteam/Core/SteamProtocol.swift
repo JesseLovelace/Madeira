@@ -56,6 +56,8 @@ enum SteamServiceMethod: String {
     case getOwnedGames = "Player.GetOwnedGames#1"
     /// The account's Steam Cloud file list for one app.
     case cloudGetAppFileChangelist = "Cloud.GetAppFileChangelist#1"
+    /// Where one cloud file can be downloaded from.
+    case cloudClientFileDownload = "Cloud.ClientFileDownload#1"
 }
 
 // MARK: - Result codes
