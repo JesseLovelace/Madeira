@@ -569,6 +569,76 @@ enum StikJITHelper {
         return (rx: rxPtr, rw: rwPtr, size: poolSize)
     }
 
+    // MARK: JIT pool taken ahead of Play
+
+    /// The debugger has to answer the pool request, and it can only be counted on
+    /// while it is still fresh: StikDebug is in the background from the moment
+    /// Madeira is in front, and a request made after iOS has suspended it is never
+    /// answered, which freezes the whole app. So the pool is requested as soon as
+    /// the debugger is seen attached (at app start, or right after Enable JIT)
+    /// and the debugger is detached at once; Play then takes the finished pool and
+    /// needs nothing from the debugger. env.MADEIRA_EARLY_JIT = 0 restores the
+    /// request at Play.
+    ///
+    /// The pool counts toward the app's memory from the moment it exists, so the
+    /// app holds it while idle in the library as well.
+    private static let earlyLock = NSLock()
+    private static var earlyPool: (rx: UnsafeMutableRawPointer, rw: UnsafeMutableRawPointer, size: Int)?
+    private static var earlyStarted = false
+    /// True once the debugger was detached ahead of Play; nothing may ask it for memory after that.
+    private(set) static var earlyDetached = false
+
+    static var earlyEnabled: Bool {
+        // A compact pool is chosen per launch, which is not known yet.
+        SteamSignIn.flag("MADEIRA_EARLY_JIT", default: true)
+            && !SteamSignIn.flag("MADEIRA_DOCK_COMPACT_POOL", default: false)
+    }
+
+    /// Call once on the main thread at app start. Waits for the debugger, then takes the pool.
+    static func watchForDebugger() {
+        guard earlyEnabled, !earlyStarted else { return }
+        if jit_check_debugged() { prepareEarly(); return }
+        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { timer in
+            guard jit_check_debugged() else { return }
+            timer.invalidate()
+            prepareEarly()
+        }
+    }
+
+    private static func prepareEarly() {
+        guard !earlyStarted else { return }
+        earlyStarted = true
+        var mb = 896
+        if let txt = MadeiraConfig.get("pool"), let v = Int(txt), v >= 256, v <= 1152 { mb = v }
+        DispatchQueue.global(qos: .userInitiated).async {
+            earlyLock.lock()
+            defer { earlyLock.unlock() }
+            // A session that started in the meantime takes its own pool.
+            guard wine_process_is_running() == 0, wineserver_is_running() == 0 else { return }
+            let t0 = CFAbsoluteTimeGetCurrent()
+            LogStore.shared.log("[early-jit] debugger attached: taking the \(mb)MB JIT pool now")
+            guard let pool = allocatePool(poolSize: mb * 1024 * 1024) else {
+                LogStore.shared.log("[early-jit] pool not obtained; Play will ask again", level: .error)
+                return
+            }
+            detachDebugger()
+            earlyPool = pool
+            earlyDetached = true
+            LogStore.shared.log(String(format: "[early-jit] pool %dMB ready and debugger detached in %.0f ms",
+                                       pool.size >> 20, (CFAbsoluteTimeGetCurrent() - t0) * 1000), level: .success)
+        }
+    }
+
+    /// The pool taken ahead of Play, once. Waits for a request still in flight.
+    static func takeEarlyPool() -> (rx: UnsafeMutableRawPointer, rw: UnsafeMutableRawPointer, size: Int)? {
+        earlyLock.lock()
+        defer { earlyLock.unlock() }
+        earlyStarted = true          // a session is starting: no early request after this
+        let pool = earlyPool
+        earlyPool = nil
+        return pool
+    }
+
     /// Detach the debugger. Call this after Wine is done loading PE DLLs.
     static func detachDebugger() {
         LogStore.shared.log("Detaching debugger...")

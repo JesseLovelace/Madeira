@@ -9,6 +9,7 @@ struct MadeiraApp: App {
                 .onAppear {
                     GamepadInput.shared.start()
                     HardwareInput.shared.start()
+                    StikJITHelper.watchForDebugger()
                 }
         }
     }

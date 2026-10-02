@@ -2130,6 +2130,11 @@ struct ContentView: View {
     }
 
     private func runJITTest() {
+        // These tests ask the debugger for memory, which it cannot give once detached.
+        guard !StikJITHelper.earlyDetached else {
+            logStore.log("The debugger was detached when the JIT pool was taken. Set env.MADEIRA_EARLY_JIT = 0 in madeira.cfg to run this test.", level: .error)
+            return
+        }
         jitStatus = .testing
         logStore.log("Starting JIT test...")
 
@@ -2165,6 +2170,11 @@ struct ContentView: View {
     }
 
     private func runJITTestStrategy2() {
+        // These tests ask the debugger for memory, which it cannot give once detached.
+        guard !StikJITHelper.earlyDetached else {
+            logStore.log("The debugger was detached when the JIT pool was taken. Set env.MADEIRA_EARLY_JIT = 0 in madeira.cfg to run this test.", level: .error)
+            return
+        }
         jitStatus = .testing
         logStore.log("Starting JIT test (Strategy 2: debugger-allocated RX)...")
 
@@ -2191,6 +2201,11 @@ struct ContentView: View {
     }
 
     private func runFEXTest() {
+        // These tests ask the debugger for memory, which it cannot give once detached.
+        guard !StikJITHelper.earlyDetached else {
+            logStore.log("The debugger was detached when the JIT pool was taken. Set env.MADEIRA_EARLY_JIT = 0 in madeira.cfg to run this test.", level: .error)
+            return
+        }
         logStore.log("Starting FEX-Emu integration test...")
         jitStatus = .testing
 
@@ -2596,12 +2611,21 @@ struct ContentView: View {
             }
 
             winios_phase("pool-alloc-begin")
-            logStore.log("Allocating \(poolSizeMB)MB JIT pool (BRK will suspend process)...")
-            let t0 = CFAbsoluteTimeGetCurrent()
-            let pool = StikJITHelper.allocatePool(poolSize: poolSizeMB * 1024 * 1024)
-            let elapsed = CFAbsoluteTimeGetCurrent() - t0
+            // The pool is normally taken as soon as the debugger attaches
+            // (StikJITHelper.watchForDebugger); the debugger is already detached then.
+            let earlyPool = StikJITHelper.takeEarlyPool()
+            let pool: (rx: UnsafeMutableRawPointer, rw: UnsafeMutableRawPointer, size: Int)?
+            if let earlyPool {
+                pool = earlyPool
+                logStore.log("[early-jit] using the pool taken ahead of Play (\(earlyPool.size >> 20)MB, wanted \(poolSizeMB)MB)")
+            } else {
+                logStore.log("Allocating \(poolSizeMB)MB JIT pool (BRK will suspend process)...")
+                let t0 = CFAbsoluteTimeGetCurrent()
+                pool = StikJITHelper.allocatePool(poolSize: poolSizeMB * 1024 * 1024)
+                let elapsed = CFAbsoluteTimeGetCurrent() - t0
+                logStore.log("BRK suspension lasted \(String(format: "%.2f", elapsed))s")
+            }
             winios_phase("pool-ready")
-            logStore.log("BRK suspension lasted \(String(format: "%.2f", elapsed))s")
 
             // Arena carver self-test. Documents/madeira-arena-test.txt holds
             // "churn:N", "ramp:N" or "random:N". Deliberately a SEPARATE file
@@ -2809,7 +2833,9 @@ struct ContentView: View {
             // setup, which is AFTER this point, so this BRK still reaches StikDebug.
             // Flip to false to A/B against the old attached-for-the-whole-run behaviour.
             let earlyDetach = true
-            if earlyDetach, pool != nil {
+            if earlyPool != nil {
+                logStore.log("[early-detach] already detached when the pool was taken")
+            } else if earlyDetach, pool != nil {
                 let dt0 = CFAbsoluteTimeGetCurrent()
                 StikJITHelper.detachDebugger()
                 let dms = (CFAbsoluteTimeGetCurrent() - dt0) * 1000.0
