@@ -6,11 +6,12 @@
 // (Cloud.GetAppFileChangelist) and the app's `ufs` product info; the same
 // model as other open-source Steam clients use.
 //
-// Stages 1 and 2, this file: it asks Steam which save files the account has
-// in the cloud for a game, finds the same files in the Wine prefix and
-// compares them, and can download cloud files into the prefix when the user
-// asks. A file a download replaces is copied to a backup folder first.
-// Nothing is uploaded yet. Log tag: [steam-cloud] (App IDs, counts, save file
+// It asks Steam which save files the account has in the cloud for a game,
+// finds the same files in the Wine prefix and compares them, then downloads
+// and uploads what changed on one side only. A save that changed on both
+// sides, or that differs with no record of an earlier sync, is left alone
+// until the user chooses a side. A file a download replaces is copied to a
+// backup folder first. Log tag: [steam-cloud] (App IDs, counts, save file
 // names under their Steam folder names; never account data or user folder
 // names).
 
@@ -133,6 +134,12 @@ struct SteamCloudPaths: Sendable {
         }
     }
 
+    /// Steam's own spelling of a root name (product info is not consistent about case).
+    static func canonical(root: String) -> String {
+        ["GameInstall", "WinMyDocuments", "WinAppDataLocal", "WinAppDataLocalLow", "WinAppDataRoaming", "WinSavedGames"]
+            .first { $0.caseInsensitiveCompare(root) == .orderedSame } ?? root
+    }
+
     /// Splits "%Root%rest" into its root name and the rest; no placeholder
     /// gives a nil root (Steam's `remote` folder).
     static func split(_ path: String) -> (root: String?, rest: String) {
@@ -204,8 +211,11 @@ struct SteamCloudEntry: Identifiable, Equatable, Sendable {
     var localSize: UInt64 = 0
     var localTime: UInt64 = 0
     var cloudSHA = Data()
+    var localSHA = Data()
 
     var id: String { path }
+    /// Baseline key: one spelling per file.
+    var key: String { path.lowercased() }
     /// The file name without its folders, for display.
     var name: String { path.split(separator: "/").last.map(String.init) ?? path }
 }
@@ -254,7 +264,8 @@ struct SteamCloudAudit: Equatable, Sendable {
             var entry = SteamCloudEntry(path: file.path, kind: .cloudOnly, cloudSize: file.size, cloudTime: file.timestamp, cloudSHA: file.sha)
             if let local = attributes(url) {
                 entry.localSize = local.size; entry.localTime = local.time
-                entry.kind = (local.size == file.size && sha1(of: url) == file.sha) ? .same : .differ
+                entry.localSHA = sha1(of: url) ?? Data()
+                entry.kind = (local.size == file.size && entry.localSHA == file.sha) ? .same : .differ
             }
             audit.entries.append(entry)
         }
@@ -263,7 +274,11 @@ struct SteamCloudAudit: Equatable, Sendable {
         for save in saveFiles where save.platforms.isEmpty || save.platforms.contains("windows") {
             guard let place = paths.location(cloudPath: "%\(save.root)%" + (save.path.isEmpty ? "x" : save.path + "/x")) else { continue }
             let folder = SteamCloudPaths.resolve(base: place.base, parts: Array(place.parts.dropLast()))
-            let label = "%\(save.root)%" + (save.path.isEmpty ? "" : save.path + "/")
+            // A Windows override moves the folder: its cloud name is not this one, so
+            // files found there are not offered for upload.
+            if paths.overrides.contains(where: { $0.root.caseInsensitiveCompare(save.root) == .orderedSame
+                                                 && $0.os.caseInsensitiveCompare("Windows") == .orderedSame }) { continue }
+            let label = "%\(SteamCloudPaths.canonical(root: save.root))%" + (save.path.isEmpty ? "" : save.path + "/")
             folders.append((label, folder, save.pattern.isEmpty ? "*" : save.pattern, save.recursive))
         }
         folders.append(("", paths.remoteFolder, "*", true))
@@ -283,25 +298,41 @@ struct SteamCloudAudit: Equatable, Sendable {
                 // Both resolved: the enumerator may spell the same folder differently (/private/var).
                 let relative = url.resolvingSymlinksInPath().path.dropFirst(base.count).drop { $0 == "/" }
                 audit.entries.append(SteamCloudEntry(path: folder.label + String(relative), kind: .localOnly,
-                                                     localSize: local.size, localTime: local.time))
+                                                     localSize: local.size, localTime: local.time,
+                                                     localSHA: sha1(of: url) ?? Data()))
             }
         }
         return audit
     }
 
-    /// Where a file the cloud lists, and this prefix lacks, might really be: the
-    /// first file of that name under the user folder, as a path relative to it.
-    /// Diagnostic for a game that keeps its saves somewhere Steam does not say.
-    static func findElsewhere(name: String, userFolder: URL) -> String? {
-        guard let walk = FileManager.default.enumerator(at: userFolder, includingPropertiesForKeys: nil) else { return nil }
-        let base = userFolder.resolvingSymlinksInPath().path
-        var visited = 0
-        for case let url as URL in walk {
-            visited += 1
-            if visited > 30_000 { return nil }
-            if walk.level > 7 { walk.skipDescendants(); continue }
-            if url.lastPathComponent.caseInsensitiveCompare(name) == .orderedSame {
-                return String(url.resolvingSymlinksInPath().path.dropFirst(base.count).drop { $0 == "/" })
+    /// Where saves the cloud lists, and this prefix lacks, might really be: the
+    /// first file of that name, or folder named like the saves' folder, under
+    /// any user folder, as a path relative to `users` with the user folder's
+    /// name left out. Diagnostic for a game that keeps its saves somewhere Steam
+    /// does not say.
+    static func findElsewhere(cloudPath: String, drive: URL) -> String? {
+        let parts = SteamCloudPaths.split(cloudPath).rest.split(separator: "/").map(String.init)
+        guard let name = parts.last else { return nil }
+        let folderName = parts.count >= 2 ? parts[parts.count - 2] : nil
+        let users = drive.appendingPathComponent("users", isDirectory: true)
+        let userNames = ((try? FileManager.default.contentsOfDirectory(atPath: users.path)) ?? []).sorted()
+        for (index, user) in userNames.enumerated() {
+            let root = users.appendingPathComponent(user, isDirectory: true)
+            guard let walk = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else { continue }
+            let base = root.resolvingSymlinksInPath().path
+            var visited = 0
+            for case let url as URL in walk {
+                visited += 1
+                if visited > 60_000 { break }
+                if walk.level > 8 { walk.skipDescendants(); continue }
+                let last = url.lastPathComponent
+                // Browser caches and the like: large, and never where a game saves.
+                if last == "htmlcache" || last == "Temp" || last == "INetCache" { walk.skipDescendants(); continue }
+                if last.caseInsensitiveCompare(name) == .orderedSame
+                    || (folderName.map { last.caseInsensitiveCompare($0) == .orderedSame } ?? false) {
+                    let relative = url.resolvingSymlinksInPath().path.dropFirst(base.count).drop { $0 == "/" }
+                    return "<user \(index)>/" + String(relative)
+                }
             }
         }
         return nil
@@ -449,19 +480,165 @@ enum SteamCloudTransfer {
     }
 }
 
+// MARK: - What to do with a comparison
+
+/// Decides, from a comparison and the record of what was last in sync, which
+/// files changed on one side only (and can be copied without asking) and
+/// which need the user's choice. Foundation only.
+struct SteamCloudPlan: Equatable, Sendable {
+    var download: [SteamCloudEntry] = []
+    var upload: [SteamCloudEntry] = []
+    /// Differ, and either both sides changed since the last sync or there is
+    /// no record of one.
+    var conflicts: [SteamCloudEntry] = []
+    /// Identical on both sides now: the new baseline for these files.
+    var settled: [String: String] = [:]
+
+    static func hex(_ data: Data) -> String { data.map { String(format: "%02x", $0) }.joined() }
+
+    /// `baseline`: SHA-1 (hex) of each file when it was last the same on both
+    /// sides, by `SteamCloudEntry.key`.
+    static func make(audit: SteamCloudAudit, baseline: [String: String]) -> SteamCloudPlan {
+        var plan = SteamCloudPlan()
+        for entry in audit.entries {
+            let known = baseline[entry.key]
+            switch entry.kind {
+            case .same:
+                plan.settled[entry.key] = hex(entry.cloudSHA)
+            case .differ:
+                let cloud = hex(entry.cloudSHA), local = hex(entry.localSHA)
+                if let known, known == cloud, known != local { plan.upload.append(entry) }
+                else if let known, known == local, known != cloud { plan.download.append(entry) }
+                else { plan.conflicts.append(entry) }
+            case .cloudOnly:
+                // New in the cloud. A file this device once had and no longer has was
+                // deleted here: it is not brought back, and not deleted in the cloud.
+                if known == nil { plan.download.append(entry) }
+            case .localOnly:
+                // New on this device. A file the cloud once had and no longer has was
+                // deleted elsewhere: it is not sent back.
+                if known == nil, !entry.localSHA.isEmpty { plan.upload.append(entry) }
+            }
+        }
+        return plan
+    }
+}
+
+// MARK: - Upload
+
+/// One HTTP request of a file upload (ClientCloudFileUploadBlockDetails).
+struct SteamCloudUploadBlock: Sendable {
+    var host = ""
+    var path = ""
+    var https = true
+    var method: Int32 = 0
+    var headers: [(name: String, value: String)] = []
+    var offset: UInt64 = 0
+    var length: UInt64 = 0
+    var explicitBody = Data()
+
+    /// CCloud_ClientBeginFileUpload_Response: encrypt_file = 1, block_requests = 2
+    /// { url_host = 1, url_path = 2, use_https = 3, http_method = 4,
+    /// request_headers = 5 { name = 1, value = 2 }, block_offset = 6,
+    /// block_length = 7, explicit_body_data = 8 }.
+    static func parse(_ data: Data) throws -> (encrypt: Bool, blocks: [SteamCloudUploadBlock]) {
+        var decoder = ProtobufDecoder(data)
+        var encrypt = false
+        var blocks: [SteamCloudUploadBlock] = []
+        while let tag = try decoder.readTag() {
+            switch (tag.fieldNumber, tag.wireType) {
+            case (1, .varint): encrypt = try decoder.readVarint() != 0
+            case (2, .lengthDelimited):
+                var sub = ProtobufDecoder(try decoder.readBytes())
+                var block = SteamCloudUploadBlock()
+                while let field = try sub.readTag() {
+                    switch (field.fieldNumber, field.wireType) {
+                    case (1, .lengthDelimited): block.host = try sub.readString()
+                    case (2, .lengthDelimited): block.path = try sub.readString()
+                    case (3, .varint): block.https = try sub.readVarint() != 0
+                    case (4, .varint): block.method = Int32(truncatingIfNeeded: try sub.readVarint())
+                    case (6, .varint): block.offset = try sub.readVarint()
+                    case (7, .varint): block.length = try sub.readVarint()
+                    case (8, .lengthDelimited): block.explicitBody = try sub.readBytes()
+                    case (5, .lengthDelimited):
+                        var header = ProtobufDecoder(try sub.readBytes())
+                        var name = "", value = ""
+                        while let part = try header.readTag() {
+                            switch (part.fieldNumber, part.wireType) {
+                            case (1, .lengthDelimited): name = try header.readString()
+                            case (2, .lengthDelimited): value = try header.readString()
+                            default: try header.skip(wireType: part.wireType)
+                            }
+                        }
+                        if !name.isEmpty, block.headers.count < 32 { block.headers.append((name, value)) }
+                    default: try sub.skip(wireType: field.wireType)
+                    }
+                }
+                blocks.append(block)
+                if blocks.count > 4096 { throw SteamFileError.invalid("Steam asked for too many upload parts.") }
+            default: try decoder.skip(wireType: tag.wireType)
+            }
+        }
+        return (encrypt, blocks)
+    }
+
+    var url: URL? {
+        guard !host.isEmpty, !host.contains("/"), !host.contains("@") else { return nil }
+        return URL(string: (https ? "https://" : "http://") + host + (path.hasPrefix("/") ? path : "/" + path))
+    }
+}
+
+extension SteamCloudTransfer {
+    /// Sends the parts of one file where Steam asked for them. k_EHTTPMethodPOST
+    /// is 3; Steam's storage otherwise takes PUT.
+    static func send(_ file: Data, blocks: [SteamCloudUploadBlock]) async throws {
+        for block in blocks {
+            guard let url = block.url else { throw SteamFileError.invalid("Steam gave no usable address for an upload.") }
+            var body = block.explicitBody
+            if body.isEmpty {
+                let start = Int(min(block.offset, UInt64(file.count)))
+                let end = Int(min(block.offset + block.length, UInt64(file.count)))
+                guard end - start == Int(block.length) else { throw SteamFileError.invalid("Steam asked for a part outside the file.") }
+                body = file.subdata(in: start..<end)
+            }
+            var request = URLRequest(url: url)
+            request.httpMethod = block.method == 3 ? "POST" : "PUT"
+            for header in block.headers { request.setValue(header.value, forHTTPHeaderField: header.name) }
+            let (_, response) = try await uploadSession.upload(for: request, from: body)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard (200..<300).contains(status) else { throw SteamFileError.invalid("Steam Cloud upload failed (HTTP \(status)).") }
+        }
+    }
+
+    private static let uploadSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 120
+        config.urlCache = nil
+        return URLSession(configuration: config)
+    }()
+}
+
 // MARK: - State the interface shows
 
 /// One game's Steam Cloud state, as its Game details page shows it.
 struct SteamCloudState: Equatable, Sendable {
-    enum Phase: Equatable, Sendable { case checking, ready, downloading(done: Int, of: Int), failed(String) }
+    enum Phase: Equatable, Sendable {
+        case checking, ready, failed(String)
+        case downloading(done: Int, of: Int), uploading(done: Int, of: Int)
+    }
+    /// What the last comparison leaves to the user.
+    var conflicts: [SteamCloudEntry] = []
     var phase: Phase = .checking
     var audit = SteamCloudAudit()
     var checked: Date?
-    /// The last download: how many files arrived, and where replaced files were copied.
+    /// The last download: how many files arrived, and how many replaced files were backed up.
     var lastDownload: (files: Int, backedUp: Int)?
+    /// How many files the last upload sent.
+    var lastUpload: Int?
 
     static func == (a: SteamCloudState, b: SteamCloudState) -> Bool {
-        a.phase == b.phase && a.audit == b.audit && a.checked == b.checked
+        a.phase == b.phase && a.audit == b.audit && a.checked == b.checked && a.conflicts == b.conflicts
+            && a.lastUpload == b.lastUpload
             && a.lastDownload?.files == b.lastDownload?.files && a.lastDownload?.backedUp == b.lastDownload?.backedUp
     }
 }

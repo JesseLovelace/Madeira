@@ -58,6 +58,11 @@ enum SteamServiceMethod: String {
     case cloudGetAppFileChangelist = "Cloud.GetAppFileChangelist#1"
     /// Where one cloud file can be downloaded from.
     case cloudClientFileDownload = "Cloud.ClientFileDownload#1"
+    /// Uploading an app's changed cloud files: a batch, each file, the end of the batch.
+    case cloudBeginAppUploadBatch = "Cloud.BeginAppUploadBatch#1"
+    case cloudClientBeginFileUpload = "Cloud.ClientBeginFileUpload#1"
+    case cloudClientCommitFileUpload = "Cloud.ClientCommitFileUpload#1"
+    case cloudCompleteAppUploadBatch = "Cloud.CompleteAppUploadBatchBlocking#1"
 }
 
 // MARK: - Result codes

@@ -961,7 +961,8 @@ func steamActionLabel(_ title: String, symbol: String) -> some View {
 struct SteamCloudSection: View {
     let appID: Int
     @ObservedObject private var steam = SteamOwnedLibrary.shared
-    @State private var confirmReplace = false
+    @State private var confirmCloud = false
+    @State private var confirmDevice = false
 
     private static func when(_ seconds: UInt64) -> String {
         seconds == 0 ? "unknown date" : Date(timeIntervalSince1970: TimeInterval(seconds)).formatted(date: .abbreviated, time: .shortened)
@@ -969,6 +970,7 @@ struct SteamCloudSection: View {
     private static func size(_ bytes: UInt64) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(min(bytes, UInt64(Int64.max))), countStyle: .file)
     }
+    private static func saves(_ count: Int) -> String { "\(count) save\(count == 1 ? "" : "s")" }
 
     var body: some View {
         if SteamOwnedLibrary.cloudEnabled {
@@ -977,7 +979,7 @@ struct SteamCloudSection: View {
             } header: {
                 Text("Steam Cloud")
             } footer: {
-                Text("Saves are compared with Steam Cloud when Madeira starts and when this page opens, never while a game runs. Uploading this device's saves is not available yet.")
+                Text("Saves sync with Steam Cloud when Madeira starts and when this page opens, never while a game runs: what you play is uploaded the next time Madeira starts. A save that differs on both sides is never replaced without asking.")
             }
         }
     }
@@ -992,31 +994,32 @@ struct SteamCloudSection: View {
                 HStack(spacing: 10) { ProgressView(); Text("Checking Steam Cloud…").foregroundStyle(.secondary) }
             case .downloading(let done, let total):
                 ProgressView(value: Double(done), total: Double(max(total, 1))) { Text("Downloading \(done) of \(total)") }
+            case .uploading(let done, let total):
+                ProgressView(value: Double(done), total: Double(max(total, 1))) { Text("Uploading \(done) of \(total)") }
             case .failed(let message):
                 Text(message).font(.callout).foregroundStyle(.orange)
-                Button("Check again") { Task { await steam.checkCloud(appID) } }
+                Button("Try again") { Task { await steam.syncCloud(appID) } }
             case .ready:
                 ready(state)
             }
         } else {
-            Text("Not checked yet.").foregroundStyle(.secondary)
-                .task { await steam.checkCloud(appID) }
-            Button("Check now") { Task { await steam.checkCloud(appID) } }
+            Text("Not synced yet.").foregroundStyle(.secondary)
+                .task { await steam.syncCloud(appID) }
+            Button("Sync now") { Task { await steam.syncCloud(appID) } }
         }
     }
 
     @ViewBuilder private func ready(_ state: SteamCloudState) -> some View {
         let audit = state.audit
-        let differing = audit.entries.filter { $0.kind == .differ }
-        let cloudOnly = audit.count(.cloudOnly), localOnly = audit.count(.localOnly), same = audit.count(.same)
+        let conflicts = state.conflicts
+        let same = audit.count(.same)
         if audit.entries.isEmpty {
             Text("No saves in Steam Cloud or on this device for this game.").foregroundStyle(.secondary)
         }
-        if !differing.isEmpty {
-            Label("\(differing.count) save\(differing.count == 1 ? "" : "s") differ between Steam Cloud and this device",
-                  systemImage: "exclamationmark.triangle.fill")
+        if !conflicts.isEmpty {
+            Label("\(Self.saves(conflicts.count)) differ between Steam Cloud and this device", systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
-            ForEach(differing) { entry in
+            ForEach(conflicts) { entry in
                 VStack(alignment: .leading, spacing: 3) {
                     Text(entry.name).font(.subheadline.weight(.medium))
                     Text("Steam Cloud: \(Self.when(entry.cloudTime)) · \(Self.size(entry.cloudSize))\(entry.cloudTime > entry.localTime ? " · newer" : "")")
@@ -1025,29 +1028,39 @@ struct SteamCloudSection: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            Text("This device's saves stay as they are unless you choose the Steam Cloud saves below.")
+            Text("Nothing is changed until you choose which to keep.")
                 .font(.caption).foregroundStyle(.secondary)
-            Button("Use the Steam Cloud saves…") { confirmReplace = true }
-                .confirmationDialog("Replace \(differing.count) save\(differing.count == 1 ? "" : "s") on this device with the Steam Cloud version\(differing.count == 1 ? "" : "s")? This device's copies are backed up first.",
-                                    isPresented: $confirmReplace, titleVisibility: .visible) {
-                    Button("Use the Steam Cloud saves", role: .destructive) {
-                        Task { await steam.downloadCloud(appID, replaceDiffering: true) }
-                    }
-                    Button("Keep this device's saves", role: .cancel) {}
+            Button("Keep the Steam Cloud saves…") { confirmCloud = true }
+                .confirmationDialog("Replace \(Self.saves(conflicts.count)) on this device with the Steam Cloud version? This device's copies are backed up first.",
+                                    isPresented: $confirmCloud, titleVisibility: .visible) {
+                    Button("Replace this device's saves", role: .destructive) { Task { await steam.resolveCloud(appID, useCloud: true) } }
+                    Button("Cancel", role: .cancel) {}
                 }
+            Button("Keep this device's saves…") { confirmDevice = true }
+                .confirmationDialog("Replace \(Self.saves(conflicts.count)) in Steam Cloud with this device's version? Steam keeps no copy of the saves it replaces.",
+                                    isPresented: $confirmDevice, titleVisibility: .visible) {
+                    Button("Replace the Steam Cloud saves", role: .destructive) { Task { await steam.resolveCloud(appID, useCloud: false) } }
+                    Button("Cancel", role: .cancel) {}
+                }
+        } else if !audit.entries.isEmpty {
+            let waiting = audit.count(.differ) + audit.count(.cloudOnly) + audit.count(.localOnly)
+            if waiting == 0 {
+                Label("In sync", systemImage: "checkmark.icloud").foregroundStyle(.secondary)
+            } else {
+                // One-sided leftovers: a file deleted on one side, or automatic sync turned off.
+                LabeledContent("Not synced", value: Self.saves(waiting))
+            }
         }
-        if cloudOnly > 0 {
-            LabeledContent("Only in Steam Cloud", value: "\(cloudOnly)")
-            Button("Download from Steam Cloud") { Task { await steam.downloadCloud(appID, replaceDiffering: false) } }
-        }
-        if localOnly > 0 { LabeledContent("Only on this device", value: "\(localOnly)") }
         if same > 0 { LabeledContent("Same on both", value: "\(same)") }
-        if let last = state.lastDownload {
-            Text("Downloaded \(last.files) file\(last.files == 1 ? "" : "s")."
-                 + (last.backedUp > 0 ? " \(last.backedUp) replaced save\(last.backedUp == 1 ? " was" : "s were") backed up on this device." : ""))
+        if let last = state.lastDownload, last.files > 0 {
+            Text("Downloaded \(Self.saves(last.files))."
+                 + (last.backedUp > 0 ? " \(Self.saves(last.backedUp)) replaced on this device \(last.backedUp == 1 ? "was" : "were") backed up." : ""))
                 .font(.caption).foregroundStyle(.secondary)
         }
-        Button("Check again") { Task { await steam.checkCloud(appID) } }
+        if let last = state.lastUpload, last > 0 {
+            Text("Uploaded \(Self.saves(last)).").font(.caption).foregroundStyle(.secondary)
+        }
+        Button("Sync now") { Task { await steam.syncCloud(appID) } }
     }
 }
 
