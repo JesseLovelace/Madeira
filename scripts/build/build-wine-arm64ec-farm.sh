@@ -78,8 +78,14 @@ done < <(grep -oE '^dlls/[^/]+/arm64ec-windows/[^/ :]+' "$TREE/Makefile" | grep 
 [[ ${#TARGETS[@]} -gt 0 ]] || { echo "ERROR: no arm64ec targets found in $TREE/Makefile" >&2; exit 1; }
 echo "== building ${#TARGETS[@]} arm64ec modules =="
 
+# Type libraries that other modules' IDL imports (stdole2.tlb above all) have no
+# make dependency from their users: build every .tlb first, tracked or not.
+TLBS=()
+while IFS= read -r t; do TLBS+=("$t"); done < <(grep -oE '^dlls/[^/]+/arm64ec-windows/[^/ :]+\.tlb' "$TREE/Makefile" | sort -u)
+
 # A module that does not build for ARM64EC is left out and named; the rest ship.
 set +e
+[[ ${#TLBS[@]} -gt 0 ]] && make -C "$TREE" -k -j"$JOBS" "${TLBS[@]}" > "$LOG.tlb" 2>&1
 make -C "$TREE" -k -j"$JOBS" "${TARGETS[@]}" > "$LOG" 2>&1
 set -e
 rm -rf "$OUT"; mkdir -p "$OUT"
