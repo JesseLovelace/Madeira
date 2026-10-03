@@ -112,6 +112,13 @@ physical input takes it over. Hiding the controls or disconnecting the pad then
 leaves player 1 connected at rest until the app exits. Without the switch,
 slot 0 connects only when a real source appears, as before.
 
+`env.MADEIRA_PAD_ALWAYS_SLOT` (default on) reserves player 1 for every
+session, whether or not a source exists at the start, so that a controller
+connected or touch controls shown after the game started still work: the game
+already has the pad they drive. The cost is the same as above, for every
+session: a game sees a controller at rest from the start and may show
+controller prompts. `0` restores the opt-in rule.
+
 ## Audio route with wired controllers
 
 Some controllers enumerate as a USB audio output when wired. iOS then routes all
