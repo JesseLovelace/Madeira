@@ -36,6 +36,18 @@ fi
 log "Building Madeira Dock (dockhost.exe)"
 "$ROOT/build/madeira-dock/build.sh"
 
+# On-device pairing for the built-in JIT helper (docs/JIT.md): a Rust static
+# library the app links.
+if [[ -f "$ROOT/app/Madeira/libmadeira_rppairing.a" ]]; then
+  echo "On-device pairing library: cached"
+else
+  log "Building the on-device pairing library (Rust)"
+  command -v rustup >/dev/null || brew install rustup
+  command -v cargo >/dev/null || { rustup default stable; export PATH="$HOME/.cargo/bin:$(brew --prefix rustup)/bin:$PATH"; }
+  rustup target add aarch64-apple-ios
+  "$ROOT/build/rppairing-ios/build.sh"
+fi
+
 log "Building the native D3D12 layer (madeira_d3d12.dll)"
 "$ROOT/scripts/build/build-madeira-d3d12-pe.sh"
 

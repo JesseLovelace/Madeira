@@ -17,6 +17,7 @@ required=(
   "$ROOT/app/Madeira/libntdll_unix.a"
   "$ROOT/app/Madeira/libwin32u_unix.a"
   "$ROOT/app/Madeira/libdxmt_combined.a"
+  "$ROOT/app/Madeira/libmadeira_rppairing.a"
 )
 for path in "${required[@]}"; do
   [[ -f "$path" ]] || { echo "ERROR: required build artifact missing: $path" >&2; exit 1; }
@@ -51,6 +52,10 @@ xcodebuild \
 # Preserve Madeira's requested JIT/debug entitlements in the IPA. SideStore will
 # replace this ad-hoc signature with the user's development signature while
 # retaining the supported entitlements.
+# Nested code first: the built-in JIT helper and its framework (docs/JIT.md).
+while IFS= read -r nested; do
+  codesign --force --sign - "$nested"
+done < <(find "$APP" -mindepth 2 \( -name '*.framework' -o -name '*.appex' \) -depth)
 codesign --force --sign - \
   --entitlements "$ROOT/app/Madeira/Madeira.entitlements" \
   "$APP"

@@ -10,7 +10,10 @@ struct MadeiraApp: App {
                     GamepadInput.shared.start()
                     HardwareInput.shared.start()
                     StikJITHelper.watchForDebugger()
+                    JITNetworkShortcut.shared.restoreLeftover()   // also starts its network path monitor
                 }
+                // madeira://jit-network/...: the Madeira JIT shortcut returning (JITNetwork.swift).
+                .onOpenURL { url in JITNetworkShortcut.shared.handle(url) }
         }
     }
 }

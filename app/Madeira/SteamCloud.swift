@@ -278,7 +278,11 @@ struct SteamCloudAudit: Equatable, Sendable {
             // files found there are not offered for upload.
             if paths.overrides.contains(where: { $0.root.caseInsensitiveCompare(save.root) == .orderedSame
                                                  && $0.os.caseInsensitiveCompare("Windows") == .orderedSame }) { continue }
-            let label = "%\(SteamCloudPaths.canonical(root: save.root))%" + (save.path.isEmpty ? "" : save.path + "/")
+            // The cloud name has the account IDs filled in ({64BitSteamID} and
+            // {Steam3AccountID}), as the device folder does: Steam does not commit
+            // an upload named with the placeholder itself.
+            let folderPath = save.path.isEmpty ? "" : (paths.components(save.path)?.joined(separator: "/") ?? save.path) + "/"
+            let label = "%\(SteamCloudPaths.canonical(root: save.root))%" + folderPath
             folders.append((label, folder, save.pattern.isEmpty ? "*" : save.pattern, save.recursive))
         }
         folders.append(("", paths.remoteFolder, "*", true))
@@ -491,29 +495,50 @@ struct SteamCloudPlan: Equatable, Sendable {
     /// Differ, and either both sides changed since the last sync or there is
     /// no record of one.
     var conflicts: [SteamCloudEntry] = []
-    /// Identical on both sides now: the new baseline for these files.
+    /// New record entries: SHA-1 of the files identical on both sides now, and
+    /// the marks below.
     var settled: [String: String] = [:]
 
     static func hex(_ data: Data) -> String { data.map { String(format: "%02x", $0) }.joined() }
 
+    /// Record marks besides a SHA-1. `missing:<sha>`: a save synced here at
+    /// <sha> is gone from this device while the cloud still has it, and no
+    /// choice was made yet. `deleted:<sha>`: the user chose to leave it gone
+    /// while the cloud held <sha>.
+    static let missingMark = "missing:", deletedMark = "deleted:"
+
     /// `baseline`: SHA-1 (hex) of each file when it was last the same on both
-    /// sides, by `SteamCloudEntry.key`.
+    /// sides, or a mark, by `SteamCloudEntry.key`.
     static func make(audit: SteamCloudAudit, baseline: [String: String]) -> SteamCloudPlan {
         var plan = SteamCloudPlan()
         for entry in audit.entries {
             let known = baseline[entry.key]
+            let marked = known.map { $0.hasPrefix(missingMark) || $0.hasPrefix(deletedMark) } ?? false
             switch entry.kind {
             case .same:
                 plan.settled[entry.key] = hex(entry.cloudSHA)
             case .differ:
+                // A save that was missing here and is back is a new file, not a
+                // change of the synced one: never copied over the cloud's unasked.
                 let cloud = hex(entry.cloudSHA), local = hex(entry.localSHA)
-                if let known, known == cloud, known != local { plan.upload.append(entry) }
-                else if let known, known == local, known != cloud { plan.download.append(entry) }
+                if let known, !marked, known == cloud, known != local { plan.upload.append(entry) }
+                else if let known, !marked, known == local, known != cloud { plan.download.append(entry) }
                 else { plan.conflicts.append(entry) }
             case .cloudOnly:
-                // New in the cloud. A file this device once had and no longer has was
-                // deleted here: it is not brought back, and not deleted in the cloud.
-                if known == nil { plan.download.append(entry) }
+                let cloud = hex(entry.cloudSHA)
+                if known == nil {
+                    plan.download.append(entry)          // new in the cloud
+                } else if known == deletedMark + cloud {
+                    break                                // left gone, by the user's choice
+                } else if known?.hasPrefix(deletedMark) == true {
+                    plan.download.append(entry)          // changed in the cloud since: nothing here to lose
+                } else {
+                    // Synced here once and gone now: lost with the prefix or deleted
+                    // by the game. The user chooses; until then the mark keeps a new
+                    // save of that name from going up over the cloud's copy.
+                    plan.conflicts.append(entry)
+                    if !marked { plan.settled[entry.key] = missingMark + (known ?? "") }
+                }
             case .localOnly:
                 // New on this device. A file the cloud once had and no longer has was
                 // deleted elsewhere: it is not sent back.
@@ -590,8 +615,10 @@ struct SteamCloudUploadBlock: Sendable {
 
 extension SteamCloudTransfer {
     /// Sends the parts of one file where Steam asked for them. k_EHTTPMethodPOST
-    /// is 3; Steam's storage otherwise takes PUT.
-    static func send(_ file: Data, blocks: [SteamCloudUploadBlock]) async throws {
+    /// is 3; Steam's storage otherwise takes PUT. Returns each part's HTTP status.
+    @discardableResult
+    static func send(_ file: Data, blocks: [SteamCloudUploadBlock]) async throws -> [Int] {
+        var statuses: [Int] = []
         for block in blocks {
             guard let url = block.url else { throw SteamFileError.invalid("Steam gave no usable address for an upload.") }
             var body = block.explicitBody
@@ -606,8 +633,10 @@ extension SteamCloudTransfer {
             for header in block.headers { request.setValue(header.value, forHTTPHeaderField: header.name) }
             let (_, response) = try await uploadSession.upload(for: request, from: body)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            statuses.append(status)
             guard (200..<300).contains(status) else { throw SteamFileError.invalid("Steam Cloud upload failed (HTTP \(status)).") }
         }
+        return statuses
     }
 
     private static let uploadSession: URLSession = {

@@ -1384,32 +1384,6 @@ static int ios_cage_holdback_live;
  * remainder stays ours; the original whole-cage grant is then disabled. */
 static int ios_cage_window_tail_live;
 
-/* Give the unclaimed [cage] holdback back to the band when it is exhausted.
- *
- * The holdback is 8 GB of a ~15 GB furniture window. A session with no
- * Chromium never claims it, and a guest that reserves address space freely can
- * fill the rest, so that even a 1 MB request fails. Releasing the holdback then
- * costs nothing the session was going to use.
- *
- * Off unless MADEIRA_CAGE_RELEASE=1, which the app sets for a Madeira Dock
- * session (headless Steam client, no CEF). Called with virtual_mutex held.
- * Returns 1 if the range was released. */
-static int ios_cage_release_on_exhaustion( size_t want )
-{
-    /* 1: when the guest band is exhausted, release the unclaimed 8 GB V8 cage
-     * holdback to it. Set by the app for a Madeira Dock session; off otherwise. */
-    const char *e = getenv( "MADEIRA_CAGE_RELEASE" );
-
-    if (!ios_cage_holdback_live || !e || *e != '1') return 0;
-    if (munmap( (void *)(uintptr_t)IOS_CAGE_BASE, IOS_CAGE_REAL_SIZE )) return 0;
-    ios_cage_holdback_live = 0;
-    dprintf( 2, "[cage] holdback released 0x%llx+0x%llx: the band is exhausted (request 0x%lx) and "
-                "no V8 cage was asked for\n",
-             (unsigned long long)IOS_CAGE_BASE, (unsigned long long)IOS_CAGE_REAL_SIZE,
-             (unsigned long)want );
-    return 1;
-}
-
 static int ios_soft_find( uint64_t addr )
 {
     /* ml434: smallest matching range wins — the 4GB soft cages sit INSIDE the
@@ -7933,6 +7907,50 @@ static ULONG_PTR ios_wow_extend_holdback_tail( unsigned *guard_owned )
     return ios_wow_window_try( base, guard_owned ) ? base : 0;
 }
 
+/* Give the unclaimed [cage] holdback to Wine's allocator when the band is
+ * exhausted.
+ *
+ * The holdback is 8 GB of a ~15 GB furniture window. A session with no
+ * Chromium never claims it, and a guest that reserves address space freely can
+ * fill the rest, so that even a 1 MB request fails. Handing the holdback over
+ * then costs nothing the session was going to use.
+ *
+ * Only for a failed request whose search range [start, end) could be served
+ * from the holdback: anything else gains nothing from it, and the holdback
+ * stays whole for the cage grant and the guest-window carve.
+ *
+ * WHAT IS HANDED OVER. The holdback becomes a Wine reserved area, as a guest
+ * window is: the VA stays mapped PROT_NONE and ours, and map_reserved_area
+ * places views in it. No munmap, so the kernel never sees a hole another
+ * mapping could take. Its first host page is kept out: a guest window at
+ * 0x7100000000 that found only an exact 4 GB gap borrowed its overrun guard
+ * from it (ios_wow_window_try), and that page must stay inaccessible.
+ * ios_cage_holdback_live is cleared, which disables the cage grant (it munmaps
+ * the whole range) and the carve.
+ *
+ * Off unless MADEIRA_CAGE_RELEASE=1, which the app sets for a Madeira Dock
+ * session (headless Steam client, no CEF). Called with virtual_mutex held.
+ * Returns 1 if the holdback was handed over. */
+static int ios_cage_release_on_exhaustion( void *start, void *end, size_t want )
+{
+    /* 1: when the guest band is exhausted, hand the unclaimed 8 GB V8 cage
+     * holdback to it. Set by the app for a Madeira Dock session; off otherwise. */
+    const char *e = getenv( "MADEIRA_CAGE_RELEASE" );
+    const ULONG_PTR lo = IOS_CAGE_BASE + ios_wow_guard_size();
+    const ULONG_PTR hi = IOS_CAGE_BASE + IOS_CAGE_REAL_SIZE;
+    ULONG_PTR s = (ULONG_PTR)start > lo ? (ULONG_PTR)start : lo;
+    ULONG_PTR t = (ULONG_PTR)end < hi ? (ULONG_PTR)end : hi;
+
+    if (!ios_cage_holdback_live || !e || *e != '1') return 0;
+    if (t <= s || t - s < want) return 0;
+    mmap_add_reserved_area( (void *)lo, hi - lo );
+    ios_cage_holdback_live = 0;
+    dprintf( 2, "[cage] holdback handed to the allocator [%p,%p): the band is exhausted "
+                "(request 0x%lx) and no V8 cage was asked for; its first page stays a guard\n",
+             (void *)lo, (void *)hi, (unsigned long)want );
+    return 1;
+}
+
 static ULONG_PTR ios_wow_window_pick( unsigned *guard_owned )
 {
     ULONG_PTR floor, ceil;
@@ -11221,10 +11239,11 @@ volatile int ios_in_mach_exc;
  * host meaning, while VPROT_WRITE is load-bearing -- it is what makes an inline
  * hook, a runtime relocation fixup, or the emulator's own SMC untrap land.
  *
- * Deliberately NOT "anything in the window": a guest that allocates anonymous
- * RWX memory (a managed runtime's code buffers) still needs the pool alias and
- * the store emulator, and those views are not SEC_IMAGE.  The test is the view,
- * not the address range.
+ * Deliberately NOT "anything in the window": a guest's anonymous executable
+ * memory is decided by its own rule (ios_guest_anon_rwx_is_host_data, below):
+ * a managed runtime's code buffers keep the pool alias and the store emulator,
+ * and those views are not SEC_IMAGE.  The test is the view, not the address
+ * range.
  *
  * virtual_mutex is held by every caller that can reach here (mprotect_range from
  * set_vprot, and the map_image section loop), so find_view() is safe. */
@@ -11256,40 +11275,36 @@ static int ios_guest_image_is_host_data( const void *base, size_t size )
 }
 
 
-/* iOS-Madeira: A GUEST'S ANONYMOUS RWX HEAP IS DATA TO THE HOST, TOO.
+/* A guest's anonymous RWX data heap is plain read/write memory to the host.
  *
- * THE SYMPTOM. Cuphead (Unity 2017, mono.dll with the Boehm GC) stutters and
- * freezes once gameplay allocates: one run logged 22.7M "[fault-cost] emulated-
- * store" faults, ~96 s of handler time, 99% from one thread, every block RIP in
- * mono.dll. Boehm's Win32 heap is VirtualAlloc(PAGE_EXECUTE_READWRITE) (0x41000
- * chunks, e.g. 0x7035580000), so mprotect_exec below finds no host exec, carves
- * a JIT-pool slot, remaps it R+X and routes EVERY heap store through the
- * Mach-fault store emulator (~4 us each).
+ * Some runtimes allocate their data heap PAGE_EXECUTE_READWRITE (Mono's Boehm
+ * GC does). mprotect_exec cannot grant host exec, so it would back the heap
+ * with a JIT-pool R+X slot and route every store through the store emulator.
+ * Host exec is not needed: x86 bytes are decoded by FEX, never fetched by the
+ * host, and FEX tracks SMC on RWX ranges itself through NtProtectVirtualMemory
+ * (see ml1030). So PROT_EXEC is dropped for such a heap.
  *
- * THE REASONING is ml1030's, and FEX's own (WOW64/Module.cpp, the Bop page):
- * "Executability is FEX's own bookkeeping, not the host page protection." x86
- * bytes are decoded, never fetched by the host CPU. SMC is tracked by FEX's
- * InvalidationTracker through NtProtectVirtualMemory -- it arms a page with
- * PAGE_EXECUTE_READ (-> PROT_READ here) once it translates from it and
- * HandleRWXAccessViolation disarms it with PAGE_EXECUTE_READWRITE (-> read/write)
- * after invalidating. A heap page that never held translated code simply
- * becomes ordinary writable memory: no faults at all.
+ * Excluded, because they need (or already have) the pool path: EC_CODE requests
+ * (ios_alloc_ec_code while the request is in flight, VPROT_ARM64EC afterwards),
+ * the JIT pool, alias-backed ranges, images, file mappings, and views under
+ * 64 KB (possible native thunk pages).
  *
- * THE SCOPE. Native code needs host exec, so it is excluded: FEX's code buffers
- * are EC_CODE requests (VPROT_ARM64EC, and ios_alloc_ec_code while the request
- * is in flight), anything already backed by the JIT pool or an anon-JIT alias is
- * left as it is, and so are images (ml1030 handles those) and file mappings.
- * Small views (< 64 KB) are left alone too, in case a builtin emits a native
- * thunk page without EC_CODE.
+ * Guest JIT code chunks are excluded too: guests patch them with unaligned
+ * atomics, which must not land on a plain page FEX has armed for SMC. Two tests
+ * keep them out. Only a view ALLOCATED read-write-execute qualifies (its
+ * allocation protection, view->protect, has both VPROT_WRITE and VPROT_EXEC),
+ * as a GC heap is: a JIT that allocates read-write and makes its code
+ * executable later keeps the pool path. And code and data are told apart by
+ * size, a heuristic: Boehm's heap chunks are an expansion plus one 4 KB page
+ * (0x41000, ...), never a multiple of 64 KB, while Mono's code chunks, also
+ * allocated RWX, are (0x100000). A data heap sized in 64 KB multiples just
+ * keeps the pool path.
  *
- * CODE CHUNKS STAY ON THE POOL PATH. Guest JIT code is x86 too, but converting
- * Mono's code chunks was tried on device and deadlocks: Mono patches call sites
- * with unaligned atomic xchg (FEX emits SWPAL), and on a plain page that FEX has
- * armed for SMC Cuphead's main thread parked in mono.dll for good right after a
- * burst of them. So only allocations sized like data are converted; see
- * ios_guest_anon_rwx_view_ok.
+ * The decision is per allocation and permanent. A page must not move to the
+ * pool later: that copies and remaps a live page, and a store landing between
+ * the two is lost.
  *
- * MADEIRA_GUEST_RWX_DATA=0 restores the previous behaviour exactly. */
+ * MADEIRA_GUEST_RWX_DATA=0 restores the previous behaviour. */
 static int ios_alloc_ec_code;   /* set by allocate_virtual_memory under virtual_mutex */
 
 static int ios_guest_rwx_data_enabled(void)
@@ -11310,31 +11325,14 @@ static int ios_guest_anon_rwx_view_ok( const struct file_view *view )
 {
     if (!is_view_valloc( view )) return 0;
     if (view->protect & (SEC_IMAGE | VPROT_ARM64EC | VPROT_SYSTEM)) return 0;
+    /* allocated RWX, not made executable after the fact: see above */
+    if ((view->protect & (VPROT_WRITE | VPROT_EXEC)) != (VPROT_WRITE | VPROT_EXEC)) return 0;
     if (view->size < 0x10000) return 0;
-    /* Data, not code -- a HEURISTIC, by size. Boehm's Win32 heap chunks are an
-     * expansion plus one 4 KB page (0x41000, 0x81000, ...), never a multiple of
-     * 64 KB; Mono's JIT code chunks are (0x100000). Every anonymous RWX request
-     * in three Cuphead runs was one of: 15x 0x41000, 6x 0x100000, 6x 0x1000
-     * (FEX's X64ReturnInstr). Another runtime may size things differently: a
-     * data heap in 64 KB multiples just keeps the old (slow, correct) path. */
-    return (view->size & 0xffff) != 0;
+    return (view->size & 0xffff) != 0;   /* data, not a code chunk: see above */
 }
 
-/* Decided once per allocation and never revisited: a view that qualifies is
- * plain memory for its whole life, and anything else keeps the original
- * pool-alias path from birth (the alias-cover check keeps it there).
- *
- * Do NOT turn this into "convert everything, then move a page to the pool when
- * FEX arms SMC on it". That was tried on device too. It moves a page that
- * already holds live code (ml634 copy, then vm_remap over it), and a store
- * landing between the two is lost: Cuphead's mono.dll read a pointer out of a
- * just-remapped JIT page as 0x5b18 and faulted, and Unity's crash handler then
- * suspended every thread (audio froze as well). A qualifying view that FEX does
- * arm simply follows ml1030: PAGE_EXECUTE_READ -> PROT_READ.
- *
- * The range is host-page rounded (16 KB) and so can run past the end of a guest
- * allocation (0x41000 -> 0x44000): every view it touches must qualify, rather
- * than one view having to contain all of it. */
+/* The range is host-page rounded (16 KB) and can run past the end of a guest
+ * allocation (0x41000 -> 0x44000), so every view it touches must qualify. */
 static int ios_guest_anon_rwx_is_host_data( const void *base, size_t size )
 {
 #ifdef WINE_IOS
@@ -14008,8 +14006,11 @@ static NTSTATUS map_view( struct file_view **view_ret, void *base, size_t size,
             unsigned int skips0 = ios_va_scan_skips;
 
             ptr = map_free_area( start, end, host_size, top_down, unix_prot, align_mask );
-            if (!ptr && ios_cage_release_on_exhaustion( host_size ))
-                ptr = map_free_area( start, end, host_size, top_down, unix_prot, align_mask );
+#ifdef WINE_IOS
+            /* the holdback is now a reserved area: place the view there */
+            if (!ptr && ios_cage_release_on_exhaustion( start, end, view_size ))
+                ptr = map_reserved_area( start, end, host_size, top_down, unix_prot, align_mask );
+#endif
             /* [va-scan] the ml116/ml117 probe: a healthy scan costs a handful of
              * tryfixed calls. Hundreds means we are grinding unmappable VA;
              * ptr==NULL is the silent STATUS_NO_MEMORY that handed rpmalloc a

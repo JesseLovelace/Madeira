@@ -6,7 +6,9 @@ library and downloads use, `docs/STEAM_LIBRARY.md`), which is closed
 while a game session holds the account: saves sync before and after a
 session, and during one only on the game menu's upload button.
 
-`env.MADEIRA_STEAM_CLOUD = 0` turns the feature off.
+It is on by default. **Settings › Steam Cloud saves** turns it off, which
+keeps `env.MADEIRA_STEAM_CLOUD = 0` in `madeira.cfg`; turning it back on
+syncs the installed games at once.
 `env.MADEIRA_STEAM_CLOUD_AUTO = 0` keeps the comparison and the game page
 but copies nothing in either direction unless the user asks there.
 
@@ -38,11 +40,13 @@ Play checks the game's cloud state first (`env.MADEIRA_STEAM_CLOUD_PLAY_CHECK = 
 turns this off):
 
 - In sync, checked in the last 10 minutes: the game starts.
-- Checked longer ago: the saves are synced again, then the game starts.
+- Not checked yet in this app run (Play pressed before the start-up sync got
+  to the game), or checked longer ago: the saves are synced first, then the
+  game starts.
 - A check or transfer is running: an alert offers **Wait and sync** (the game
   starts when it finishes) or **Launch anyway**.
-- The check failed or has not run (no network, for example): **Try again**
-  or **Launch anyway**.
+- The check failed (no network, for example): **Try again** or **Launch
+  anyway**.
 - Saves wait for a choice: **Choose** opens the game's page, or **Launch
   anyway**.
 
@@ -67,17 +71,27 @@ file is written whole.
    - changed on both, or different with no record: **left alone**. The
      start-up check names the games, and the game's page shows each such
      save with both dates and sizes and asks which side to keep;
-   - present in the record but now missing on one side: left alone (never
-     deleted on the other side, never brought back).
+   - synced before and now missing on this device while the cloud still has
+     it (a reset prefix, or the game deleted it): **a choice**, like a save
+     that changed on both sides, and Play waits for it. Keeping the cloud's
+     copy downloads it; keeping this device's state leaves it missing, which
+     is recorded and not asked again unless the cloud's copy changes. Until
+     the choice, a save of that name that appears on the device is a choice
+     too, never uploaded over the cloud's copy unasked;
+   - synced before and now missing in the cloud (deleted elsewhere): left
+     alone, not sent back.
 
 ## Safety
 
 - A downloaded file is checked against the SHA-1 in Steam's list before
   anything is written.
-- A file a download replaces is first copied to
-  `Application Support/Madeira/steam-cloud-backups/<app>/<time>/`.
-- Steam keeps no copy of a cloud file an upload replaces, which is why an
-  upload over a differing cloud file only happens on the user's choice or
+- Backups are kept where the Files app shows them, in
+  `Madeira/Steam Cloud Backups/<game> (<App ID>)/<time>/`:
+  - `device/` holds each device file a download replaced;
+  - `cloud/` holds each cloud file an upload replaced. Steam keeps no copy
+    of those, so Madeira downloads the cloud's copy (checked against its
+    SHA-1) before the upload starts; if it cannot, nothing is uploaded.
+- An upload over a differing cloud file only happens on the user's choice or
   when the record shows the cloud copy is the one this device last synced.
 - Nothing is ever deleted in the cloud.
 

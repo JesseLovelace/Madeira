@@ -268,7 +268,7 @@ enum VDFParser {
     /// Steam PICS sends *app* product info in this text format (`"key" "value"`
     /// pairs and `"key" { ... }` sections) — package info uses the binary
     /// format. Leaf values are always `String`. Steam escapes `"` and `\` inside
-    /// a quoted string (a launch argument such as `/Project=\"Iris Loc\"`); read
+    /// a quoted string (for example a launch argument `/Name=\"Two Words\"`); read
     /// verbatim, such a string ends early and every later section, the depots
     /// among them, is lost.
     static func parseTextVDF(from data: Data) -> [String: Any] {

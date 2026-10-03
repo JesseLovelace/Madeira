@@ -196,6 +196,10 @@ jobs:
           path: |
             app/Madeira/libdxmt_combined.a
             build/dxmt-ios/shader-headers
+      - uses: actions/cache@v4
+        with:
+          key: rppairing-${{ hashFiles('build/rppairing-ios/Cargo.lock', 'build/rppairing-ios/src/**', 'build/rppairing-ios/build.sh') }}
+          path: app/Madeira/libmadeira_rppairing.a
       - name: Build IPA
         run: scripts/build-ipa.sh
       - uses: actions/upload-artifact@v4
