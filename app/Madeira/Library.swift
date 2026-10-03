@@ -2705,6 +2705,12 @@ struct LibraryFloatingItem: View {
     }
     private func record(_ rect: CGRect) {
         if isMenu { model.menuButtonRect = rect } else { model.performanceRect = rect }
+        // Diagnostic: where the session's menu button is, or that it left the screen.
+        if isMenu {
+            fputs(String(format: "[menu-button] rect=(%.0f,%.0f %.0fx%.0f) viewport=%.0fx%.0f saved=(%.2f,%.2f) measured=%.0fx%.0f insets=(%.0f,%.0f,%.0f,%.0f) faded=%d\n",
+                         rect.minX, rect.minY, rect.width, rect.height, viewport.width, viewport.height, nx, ny,
+                         measured.width, measured.height, insets.top, insets.leading, insets.bottom, insets.trailing, faded ? 1 : 0), stderr)
+        }
     }
     var body: some View {
         let center = position(drag)
@@ -2777,6 +2783,11 @@ struct LibraryHUD: View {
                 if model.liveLogs && !model.launching { LibraryLiveLogs().frame(maxWidth: 550, maxHeight: 140).padding(.top, Self.topInset(geo) + 60).padding(.horizontal, 12).allowsHitTesting(false) }
                 if !model.sessionMessage.isEmpty { Text(model.sessionMessage).font(.caption).padding(10).background(.regularMaterial, in: Capsule()).frame(maxWidth: .infinity).padding(.top, Self.topInset(geo) + 12).allowsHitTesting(false) }
                 if !model.launching { LibraryFloatingItem(isMenu: true, viewport: geo.size, insets: geo.safeAreaInsets) }
+                Color.clear.frame(width: 0, height: 0)
+                    .onAppear { fputs("[menu-button] hud appear launching=\(model.launching ? 1 : 0) editing=\(controls.editing ? 1 : 0) visible=\(controls.visible ? 1 : 0) size=\(Int(geo.size.width))x\(Int(geo.size.height))\n", stderr) }
+                    .onDisappear { fputs("[menu-button] hud disappear\n", stderr) }
+                    .onChange(of: model.launching) { _, on in fputs("[menu-button] launching=\(on ? 1 : 0) editing=\(controls.editing ? 1 : 0) size=\(Int(geo.size.width))x\(Int(geo.size.height))\n", stderr) }
+                    .onChange(of: controls.editing) { _, on in fputs("[menu-button] editing=\(on ? 1 : 0)\n", stderr) }
                 if model.menu {
                     Color.black.opacity(0.5).ignoresSafeArea().onTapGesture { model.menu = false }.transition(.opacity)
                     menu.frame(width: min(460, geo.size.width - 32), height: min(650, geo.size.height - geo.safeAreaInsets.top - geo.safeAreaInsets.bottom - 24))
