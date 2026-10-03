@@ -488,7 +488,7 @@ final class SteamOwnedLibrary: ObservableObject {
         cloud[appID] = state
         do {
             guard let context = try await cloudContext(appID) else {
-                state.phase = .failed("This game's save folders could not be found."); cloud[appID] = state; return nil
+                state.phase = .failed(Self.cloudNoFolders); cloud[appID] = state; return nil
             }
             let listing = try await cloudListing(appID)
             let saveFiles = context.info.saveFiles, paths = context.paths, drive = Self.drive
@@ -675,6 +675,55 @@ final class SteamOwnedLibrary: ObservableObject {
         }
         state.lastUpload = done; state.phase = .ready; cloud[appID] = state
         return done > 0
+    }
+
+    // MARK: Before Play
+
+    private static let cloudNoFolders = "This game's save folders could not be found."
+
+    /// Why a game should not start yet: its saves may not be the latest.
+    /// `env.MADEIRA_STEAM_CLOUD_PLAY_CHECK = 0` starts games without asking.
+    enum CloudHold: Equatable {
+        /// A check or a transfer is running.
+        case syncing
+        /// The last check is older than `cloudFresh`: checked again before the start, without asking.
+        case stale
+        /// Never checked in this app run, or the check or a transfer failed (why).
+        case unchecked(String?)
+        /// Saves that need the user's choice (count).
+        case conflict(Int)
+    }
+    static var cloudPlayCheck: Bool { cloudEnabled && SteamSignIn.flag("MADEIRA_STEAM_CLOUD_PLAY_CHECK", default: true) }
+    private static let cloudFresh: TimeInterval = 600
+    /// The game whose saves are being synced before it starts (the library says so).
+    @Published private(set) var cloudWaitingFor: Int?
+
+    func cloudHold(_ appID: Int) -> CloudHold? {
+        guard Self.cloudPlayCheck, signedIn, !inSession else { return nil }
+        if cloudBusy.contains(appID) { return .syncing }
+        guard let state = cloud[appID] else { return .unchecked(nil) }
+        switch state.phase {
+        case .checking, .downloading, .uploading: return .syncing
+        // No prefix yet (first start): there is nothing to compare with.
+        case .failed(let message): return message == Self.cloudNoFolders ? nil : .unchecked(message)
+        case .ready: break
+        }
+        if let problem = state.problem { return .unchecked(problem) }
+        if !state.conflicts.isEmpty { return .conflict(state.conflicts.count) }
+        if Date().timeIntervalSince(state.checked ?? .distantPast) > Self.cloudFresh { return .stale }
+        return nil
+    }
+
+    /// Waits for a running sync, syncs once more, and returns what still holds the start.
+    func settleCloud(_ appID: Int) async -> CloudHold? {
+        cloudWaitingFor = appID
+        defer { cloudWaitingFor = nil }
+        for _ in 0..<600 where cloudBusy.contains(appID) { try? await Task.sleep(nanoseconds: 200_000_000) }
+        cloud[appID]?.problem = nil      // a transfer that stops again says so again
+        await syncCloud(appID)
+        let hold = cloudHold(appID)
+        SteamLog.event("[steam-cloud] app=\(appID) before-play sync result=\(hold.map { "\($0)" } ?? "clear")")
+        return hold == .stale ? nil : hold
     }
 
     // MARK: Upload and quit

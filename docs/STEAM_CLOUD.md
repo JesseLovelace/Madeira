@@ -31,6 +31,23 @@ A file that also changed in the cloud is not sent without the user choosing
 to replace the cloud's copy. On any failure the app stays open and says so.
 `env.MADEIRA_STEAM_CLOUD_QUIT = 0` hides the button.
 
+## Before a game starts
+
+Play checks the game's cloud state first (`env.MADEIRA_STEAM_CLOUD_PLAY_CHECK = 0`
+turns this off):
+
+- In sync, checked in the last 10 minutes: the game starts.
+- Checked longer ago: the saves are synced again, then the game starts.
+- A check or transfer is running: an alert offers **Wait and sync** (the game
+  starts when it finishes) or **Launch anyway**.
+- The check failed or has not run (no network, for example): **Try again**
+  or **Launch anyway**.
+- Saves wait for a choice: **Choose** opens the game's page, or **Launch
+  anyway**.
+
+A start interrupts a running download between files, never inside one: each
+file is written whole.
+
 ## What it does
 
 1. Asks Steam for the app's cloud file list (`Cloud.GetAppFileChangelist`).

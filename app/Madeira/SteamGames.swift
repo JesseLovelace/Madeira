@@ -502,6 +502,12 @@ struct SteamGamesSection: View {
                               systemImage: "exclamationmark.icloud")
                             .font(.footnote).foregroundStyle(.orange)
                     }
+                    if let waiting = steam.cloudWaitingFor {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("Syncing \(model.games.first { $0.id == waiting }?.name ?? "the game")'s Steam Cloud saves, then starting it…")
+                        }.font(.footnote).foregroundStyle(.secondary)
+                    }
                     if hideInstalled && collapsible {
                         EmptyView()
                     } else if !groups.downloading.isEmpty || !installed.isEmpty {
