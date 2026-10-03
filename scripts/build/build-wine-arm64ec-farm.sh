@@ -86,6 +86,12 @@ while IFS= read -r t; do TLBS+=("$t"); done < <(grep -oE '^dlls/[^/]+/arm64ec-wi
 # A module that does not build for ARM64EC is left out and named; the rest ship.
 set +e
 [[ ${#TLBS[@]} -gt 0 ]] && make -C "$TREE" -k -j"$JOBS" "${TLBS[@]}" > "$LOG.tlb" 2>&1
+# widl looks for an ARM64EC module's imported type library under
+# aarch64-windows (tools.h get_arch_dir), which an arm64ec-only tree lacks.
+for t in "${TLBS[@]}"; do
+  d="$TREE/$(dirname "$(dirname "$t")")"
+  [[ -e "$d/aarch64-windows" ]] || ln -s arm64ec-windows "$d/aarch64-windows"
+done
 make -C "$TREE" -k -j"$JOBS" "${TARGETS[@]}" > "$LOG" 2>&1
 set -e
 rm -rf "$OUT"; mkdir -p "$OUT"
@@ -102,7 +108,7 @@ if [[ ${#FAILED[@]} -gt 0 ]]; then
   echo "== ${#FAILED[@]} modules did not build: ${FAILED[*]}"
   if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
     echo "::warning title=ARM64EC modules that did not build (${#FAILED[@]})::${FAILED[*]}"
-    msg="$( { ls "$TREE"/dlls/stdole2.tlb/ "$TREE"/dlls/stdole2.tlb/arm64ec-windows 2>&1 | head -8; grep -m3 "stdole2" "$TREE/Makefile" | cut -c1-300; grep -c . "$LOG.tlb" 2>/dev/null; tail -4 "$LOG.tlb" 2>/dev/null; grep -m2 -B6 -E "cannot find" "$LOG" || tail -20 "$LOG"; } | cut -c1-400 | head -30 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+    msg="$( (grep -m6 -E "error:|Error [0-9]|No rule" "$LOG" || tail -20 "$LOG") | cut -c1-300 | head -12 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
     echo "::warning title=First build errors::$msg"
   fi
 fi
