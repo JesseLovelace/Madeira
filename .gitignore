@@ -35,6 +35,9 @@ app/libwineserver.a
 app/Madeira/libdxmt_combined.a
 app/Madeira/libwin32u_unix.a
 app/libwin32u_unix.a
+# On-device pairing (build/rppairing-ios/build.sh)
+app/Madeira/libmadeira_rppairing.a
+build/rppairing-ios/target/
 # FFmpeg (build/ffmpeg/build.sh): static archives and build tree (the source
 # tarball in build/ffmpeg/src/ is tracked, like build/gnutls-ios/src/)
 app/Madeira/libavformat.a
@@ -158,3 +161,6 @@ app/Madeira/i386-windows/*
 # Madeira Dock: built from madeira-dock by build/madeira-dock/build.sh
 app/Madeira/arm64ec-windows/dockhost.exe
 app/Madeira/arm64ec-windows/dock-notices.txt
+
+# The rest of Wine's 64-bit DLLs (scripts/build/build-wine-arm64ec-farm.sh)
+app/Madeira/arm64ec-windows-extra/
