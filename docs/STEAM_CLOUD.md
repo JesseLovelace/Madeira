@@ -2,8 +2,9 @@
 
 Madeira syncs the save files of installed Steam games with the signed-in
 account's Steam Cloud. It uses the app's own Steam connection (the one the
-library and downloads use, `docs/STEAM_LIBRARY.md`), so it only ever runs
-while no game session holds the account.
+library and downloads use, `docs/STEAM_LIBRARY.md`), which is closed
+while a game session holds the account: saves sync before and after a
+session, and during one only on the game menu's upload button.
 
 `env.MADEIRA_STEAM_CLOUD = 0` turns the feature off.
 `env.MADEIRA_STEAM_CLOUD_AUTO = 0` keeps the comparison and the game page
@@ -89,5 +90,4 @@ file is written whole.
   Windows is compared and downloaded, but new device files there are not
   uploaded.
 - Encrypted cloud files are not supported.
-- Log tag `[steam-cloud]`: App IDs, counts, and save file names under
-  their Steam folder names. Never account data or the Windows user name.
+- Log tag `[steam-cloud]`: App IDs, counts and results; no file names or paths.

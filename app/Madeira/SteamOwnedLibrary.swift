@@ -509,13 +509,7 @@ final class SteamOwnedLibrary: ObservableObject {
             cloud[appID] = state
             let roots = Set(saveFiles.map(\.root)).sorted().joined(separator: ",")
             SteamLog.event("[steam-cloud] app=\(appID) \(audit.summary) patterns=\(saveFiles.count) roots=\(roots.isEmpty ? "-" : roots) overrides=\(context.info.rootOverrides.count) | plan download=\(plan.download.count) upload=\(plan.upload.count) ask=\(plan.conflicts.count)")
-            for item in audit.entries.filter({ $0.kind == .differ }).prefix(6) {
-                SteamLog.event("[steam-cloud] app=\(appID) differ \(item.path) cloud=\(item.cloudSize)B@\(item.cloudTime) local=\(item.localSize)B@\(item.localTime) newer=\(item.localTime > item.cloudTime ? "local" : "cloud")")
-            }
-            for path in audit.paths(.cloudOnly).prefix(6) { SteamLog.event("[steam-cloud] app=\(appID) cloud-only \(path)") }
-            for path in audit.paths(.localOnly).prefix(6) { SteamLog.event("[steam-cloud] app=\(appID) local-only \(path)") }
-            for path in audit.unmapped.prefix(6) { SteamLog.event("[steam-cloud] app=\(appID) unmapped \(path)") }
-            if let elsewhere = result.1 { SteamLog.event("[steam-cloud] app=\(appID) found-elsewhere \(elsewhere)") }
+            if let elsewhere = result.1 { SteamLog.event("[steam-cloud] app=\(appID) saves-found-elsewhere=\(elsewhere == "(not found)" ? 0 : 1)") }
             return plan
         } catch {
             state.phase = .failed(SteamSignIn.message(error)); cloud[appID] = state
@@ -590,10 +584,11 @@ final class SteamOwnedLibrary: ObservableObject {
 
     /// A number Steam uses to tell this device's uploads from other machines'.
     private static var cloudClientID: UInt64 {
-        let key = "MadeiraSteamCloudClientID"
-        if let stored = UserDefaults.standard.object(forKey: key) as? NSNumber, stored.uint64Value != 0 { return stored.uint64Value }
+        let url = supportFolder.appendingPathComponent("steam-cloud-client-id")
+        if let text = try? String(contentsOf: url, encoding: .utf8), let stored = UInt64(text), stored != 0 { return stored }
         let fresh = UInt64.random(in: 1...UInt64(Int64.max))
-        UserDefaults.standard.set(NSNumber(value: fresh), forKey: key)
+        try? FileManager.default.createDirectory(at: supportFolder, withIntermediateDirectories: true)
+        try? String(fresh).write(to: url, atomically: true, encoding: .utf8)
         return fresh
     }
 
