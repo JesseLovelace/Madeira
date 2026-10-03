@@ -112,6 +112,13 @@ physical input takes it over. Hiding the controls or disconnecting the pad then
 leaves player 1 connected at rest until the app exits. Without the switch,
 slot 0 connects only when a real source appears, as before.
 
+`env.MADEIRA_PAD_ALWAYS_SLOT` (default on) reserves player 1 for every
+session, whether or not a source exists at the start, so that a controller
+connected or touch controls shown after the game started still work: the game
+already has the pad they drive. The cost is the same as above, for every
+session: a game sees a controller at rest from the start and may show
+controller prompts. `0` restores the opt-in rule.
+
 ## Audio route with wired controllers
 
 Some controllers enumerate as a USB audio output when wired. iOS then routes all
@@ -210,8 +217,10 @@ merge, rebuild the paired components and test:
   delete it; the layout menu and its dialogs respond anywhere on screen; each
   kill switch at `0`. With `MADEIRA_CONTROLS_XBOX_DEFAULT = 1`: a user without
   a controls file gets the built-in once and an existing file is kept.
-- By default player 1 is not connected until a real source appears. With
-  `MADEIRA_PAD_EARLY_SLOT = 1`, a game that enumerates XInput only at startup
-  sees player 1 with touch controls shown or a controller paired before launch.
+- Player 1 is connected at rest for the whole session (`MADEIRA_PAD_ALWAYS_SLOT`),
+  so a game always sees a controller. With `MADEIRA_PAD_ALWAYS_SLOT = 0`,
+  player 1 is not connected until a real source appears, and a game that
+  enumerates XInput only at startup never sees a later one unless
+  `MADEIRA_PAD_EARLY_SLOT = 1` and a source existed at launch.
 
 The fork's existing device history does not prove this isolated extraction.
