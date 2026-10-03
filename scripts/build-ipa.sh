@@ -41,6 +41,7 @@ log "Building the native D3D12 layer (madeira_d3d12.dll)"
 
 "$ROOT/scripts/build/build-wine.sh"
 "$ROOT/scripts/build/build-wine-pe-extra.sh"
+"$ROOT/scripts/build/build-wine-arm64ec-farm.sh"
 "$ROOT/scripts/build/build-fex-ios.sh"
 "$ROOT/scripts/build/build-freetype-ios.sh"
 
