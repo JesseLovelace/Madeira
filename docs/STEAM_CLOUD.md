@@ -14,8 +14,22 @@ but copies nothing in either direction unless the user asks there.
 - Once when Madeira starts, for every installed Steam game.
 - When a Steam game's details page opens, and on its **Sync now** button.
 
+- On **Upload saves and close Madeira** in the game menu of a running Steam
+  game.
+
 Madeira cannot close a game: the user leaves one by quitting the app. So
-there is no sync at exit. What was played is uploaded at the next start.
+there is no sync at exit. What was played is uploaded at the next start,
+unless the menu button sent it first.
+
+The button works while the game still runs. Madeira's own Steam connection
+is closed for a session, because a second logon replaces the first; the
+button logs Madeira on again, which ends the logon of Valve's client in the
+session, and the app quits once the upload is confirmed. It only uploads:
+files that changed on this device and not in the cloud. It waits until two
+looks 2 s apart find the same device files, since the game may be writing.
+A file that also changed in the cloud is not sent without the user choosing
+to replace the cloud's copy. On any failure the app stays open and says so.
+`env.MADEIRA_STEAM_CLOUD_QUIT = 0` hides the button.
 
 ## What it does
 
@@ -51,7 +65,7 @@ there is no sync at exit. What was played is uploaded at the next start.
 
 ## Limits
 
-- No sync while a game runs, and none between pressing Play and the game
+- No download while a game runs, no upload except by the menu button, and no sync between pressing Play and the game
   starting: a cloud save newer than the device's that had not come down yet
   becomes a choice at the next start.
 - A game whose Windows saves are redirected by a `rootoverrides` entry for

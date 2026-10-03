@@ -966,6 +966,55 @@ func steamActionLabel(_ title: String, symbol: String) -> some View {
 /// account's cloud saves compare with the saves in the prefix, and the
 /// download of cloud saves. A save that differs on the two sides is never
 /// replaced without the user choosing it here (docs/STEAM_CLOUD.md).
+/// The session menu's "Upload saves and close Madeira" (SteamOwnedLibrary.uploadForQuit).
+struct SteamCloudQuitRow: View {
+    let appID: Int
+    @ObservedObject private var steam = SteamOwnedLibrary.shared
+    @State private var confirmReplace = false
+
+    private var working: Bool { if case .working = steam.cloudQuit { return true }; if case .done = steam.cloudQuit { return true }; return false }
+
+    private func run(replaceCloud: Bool) {
+        Task {
+            await steam.uploadForQuit(appID, replaceCloud: replaceCloud)
+            guard case .done(let count) = steam.cloudQuit else { return }
+            LogStore.shared.log("[steam-cloud] app=\(appID) quit-upload done files=\(count): closing Madeira")
+            try? await Task.sleep(nanoseconds: 1_200_000_000)   // long enough to read the result
+            exit(0)
+        }
+    }
+
+    var body: some View {
+        if SteamOwnedLibrary.cloudQuitEnabled, steam.signedIn {
+            VStack(alignment: .leading, spacing: 8) {
+                Button("Upload saves and close Madeira", systemImage: "icloud.and.arrow.up") { run(replaceCloud: false) }
+                    .disabled(working)
+                switch steam.cloudQuit {
+                case .working(let text):
+                    HStack(spacing: 10) { ProgressView(); Text(text).font(.callout) }
+                case .done(let count):
+                    Label(count == 0 ? "Steam Cloud is already up to date. Closing…" : "Uploaded \(count) save\(count == 1 ? "" : "s"). Closing…",
+                          systemImage: "checkmark.circle.fill").font(.callout).foregroundStyle(.green)
+                case .failed(let message):
+                    Text("Not uploaded, Madeira stays open: \(message)").font(.callout).foregroundStyle(.orange)
+                case .conflict(let count):
+                    Text("Not uploaded: \(count) save\(count == 1 ? " was" : "s were") also changed in Steam Cloud, by another device or with no record of a sync here. Uploading would replace the cloud's \(count == 1 ? "copy" : "copies").")
+                        .font(.callout).foregroundStyle(.orange)
+                    Button("Replace the Steam Cloud saves and close", role: .destructive) { confirmReplace = true }
+                        .confirmationDialog("Replace the Steam Cloud saves with this device's?", isPresented: $confirmReplace, titleVisibility: .visible) {
+                            Button("Replace the cloud saves", role: .destructive) { run(replaceCloud: true) }
+                            Button("Cancel", role: .cancel) { }
+                        } message: { Text("The saves in Steam Cloud are overwritten for every device. This cannot be undone from Madeira.") }
+                case nil:
+                    EmptyView()
+                }
+                Text("Save in the game first. Uploads this game's saves to Steam Cloud, then closes Madeira; Steam in this session is signed out when the upload starts.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
 struct SteamCloudSection: View {
     let appID: Int
     @ObservedObject private var steam = SteamOwnedLibrary.shared
@@ -987,7 +1036,7 @@ struct SteamCloudSection: View {
             } header: {
                 Text("Steam Cloud")
             } footer: {
-                Text("Saves sync with Steam Cloud when Madeira starts and when this page opens, never while a game runs: what you play is uploaded the next time Madeira starts. A save that differs on both sides is never replaced without asking.")
+                Text("Saves sync with Steam Cloud when Madeira starts and when this page opens, not while you play: use Upload saves and close Madeira in the game menu when you stop, or what you played is uploaded the next time Madeira starts. A save that differs on both sides is never replaced without asking.")
             }
         }
     }

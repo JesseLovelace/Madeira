@@ -2930,6 +2930,10 @@ struct LibraryHUD: View {
                         })).font(.subheadline)
                     }
                 }
+                if let appID = model.activeEntry?.steamAppID, SteamOwnedLibrary.cloudQuitEnabled {
+                    Divider()
+                    SteamCloudQuitRow(appID: appID)
+                }
                 Divider()
                 // Red label and symbol; the menu's .primary style would otherwise win.
                 Button(role: .destructive) { model.requestQuit() } label: {

@@ -155,6 +155,16 @@ struct SteamPlaytime: Codable, Equatable, Sendable {
     /// Madeira Dock's session ended, or its start failed.
     func releaseDock() { heldForDock = false }
 
+    /// The app takes the account back while the game session still runs, to upload
+    /// its saves before the app quits. One way: the session's client loses its
+    /// logon and the app does not hand the account back.
+    func takeOver() async {
+        await closing?.value
+        open = true
+        closing = nil
+        reopenConnection()
+    }
+
     /// Lets the app's connection back when no game session runs and Dock does
     /// not hold the account. Returns whether it reopened.
     @discardableResult func reopen(sessionRunning: Bool) -> Bool {
@@ -472,7 +482,7 @@ final class SteamOwnedLibrary: ObservableObject {
     /// about the differences. Reads only (it records files found identical).
     @discardableResult
     func checkCloud(_ appID: Int) async -> SteamCloudPlan? {
-        guard Self.cloudEnabled, signedIn, !inSession else { return nil }
+        guard Self.cloudEnabled, signedIn, !cloudBlocked else { return nil }
         var state = cloud[appID] ?? SteamCloudState()
         state.phase = .checking
         cloud[appID] = state
@@ -591,7 +601,7 @@ final class SteamOwnedLibrary: ObservableObject {
     /// whether Steam accepted any file; the comparison that follows is what
     /// confirms the cloud now holds them.
     private func upload(_ appID: Int, _ wanted: [SteamCloudEntry]) async -> Bool {
-        guard Self.cloudEnabled, signedIn, !inSession, var state = cloud[appID], !wanted.isEmpty else { return false }
+        guard Self.cloudEnabled, signedIn, !cloudBlocked, var state = cloud[appID], !wanted.isEmpty else { return false }
         state.phase = .uploading(done: 0, of: wanted.count); state.problem = nil; cloud[appID] = state
         var done = 0
         var batchID: UInt64 = 0
@@ -617,7 +627,7 @@ final class SteamOwnedLibrary: ObservableObject {
             }
             guard batchID != 0 else { throw SteamFileError.invalid("Steam did not open an upload for this game.") }
             for entry in wanted {
-                guard !inSession else { throw CancellationError() }
+                guard !cloudBlocked else { throw CancellationError() }
                 guard let place = context.paths.location(cloudPath: entry.path) else { continue }
                 let url = SteamCloudPaths.resolve(base: place.base, parts: place.parts)
                 let file = try Data(contentsOf: url)
@@ -665,6 +675,86 @@ final class SteamOwnedLibrary: ObservableObject {
         }
         state.lastUpload = done; state.phase = .ready; cloud[appID] = state
         return done > 0
+    }
+
+    // MARK: Upload and quit
+
+    /// A game cannot be closed from Madeira, so its saves otherwise reach the
+    /// cloud only at the next app start. The session menu's "Upload saves and
+    /// close Madeira" sends them now: the app takes the account back from the
+    /// session's client, uploads what changed on this device, and the app quits.
+    /// Nothing is downloaded while the game runs. `env.MADEIRA_STEAM_CLOUD_QUIT = 0`
+    /// hides the button.
+    static var cloudQuitEnabled: Bool { cloudEnabled && SteamSignIn.flag("MADEIRA_STEAM_CLOUD_QUIT", default: true) }
+
+    enum CloudQuit: Equatable {
+        case working(String)
+        /// The cloud's copies changed too (count): uploading would replace them.
+        case conflict(Int)
+        case failed(String)
+        /// Uploaded (count) and confirmed; the app may quit.
+        case done(Int)
+    }
+    @Published private(set) var cloudQuit: CloudQuit?
+    /// The app holds the account although a session runs (uploadForQuit).
+    private var cloudTakeover = false
+    private var cloudBlocked: Bool { inSession && !cloudTakeover }
+
+    /// Uploads the running game's changed saves. `replaceCloud` also sends the
+    /// saves that changed in the cloud as well, replacing the cloud's copies.
+    func uploadForQuit(_ appID: Int, replaceCloud: Bool = false) async {
+        guard Self.cloudQuitEnabled, signedIn, !cloudBusy.contains(appID) else { return }
+        if case .working = cloudQuit { return }
+        cloudBusy.insert(appID)
+        defer { cloudBusy.remove(appID) }
+        cloudQuit = .working("Connecting to Steam…")
+        if !cloudTakeover {
+            cloudTakeover = true
+            await gate.takeOver()
+            SteamLog.event("[steam-cloud] app=\(appID) quit-upload: connection reopened during the session")
+        }
+        func failure() -> String {
+            if case .failed(let message)? = cloud[appID]?.phase { return message }
+            return cloud[appID]?.problem ?? "Steam Cloud could not be reached."
+        }
+        // The game is still running and may be writing: go on once two looks,
+        // 2 s apart, find the same device files.
+        var plan: SteamCloudPlan?
+        var seen: [String: Data] = [:]
+        for round in 0..<5 {
+            cloudQuit = .working(round == 0 ? "Checking saves…" : "Waiting for the game to finish saving…")
+            guard let look = await checkCloud(appID) else {
+                SteamLog.event("[steam-cloud] app=\(appID) quit-upload: check failed")
+                cloudQuit = .failed(failure()); return
+            }
+            let now = (look.upload + look.conflicts).reduce(into: [String: Data]()) { $0[$1.key] = $1.localSHA }
+            plan = look
+            if round > 0, now == seen { break }
+            seen = now
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+        }
+        guard let plan else { cloudQuit = .failed(failure()); return }
+        if !plan.conflicts.isEmpty, !replaceCloud {
+            SteamLog.event("[steam-cloud] app=\(appID) quit-upload: held, conflicts=\(plan.conflicts.count) upload=\(plan.upload.count)")
+            cloudQuit = .conflict(plan.conflicts.count); return
+        }
+        let wanted = plan.upload + (replaceCloud ? plan.conflicts : [])
+        guard !wanted.isEmpty else {
+            SteamLog.event("[steam-cloud] app=\(appID) quit-upload: nothing to upload")
+            cloudQuit = .done(0); return
+        }
+        cloudQuit = .working("Uploading \(wanted.count) save\(wanted.count == 1 ? "" : "s")…")
+        _ = await upload(appID, wanted)
+        guard cloud[appID]?.problem == nil, cloud[appID]?.lastUpload == wanted.count else {
+            cloudQuit = .failed(failure()); return
+        }
+        // The comparison records the uploaded files as in sync for the next start.
+        cloudQuit = .working("Confirming…")
+        guard let after = await checkCloud(appID) else { cloudQuit = .failed(failure()); return }
+        let sent = Set(wanted.map(\.key))
+        let left = (after.upload + after.conflicts).filter { sent.contains($0.key) }.count
+        SteamLog.event("[steam-cloud] app=\(appID) quit-upload: uploaded=\(wanted.count) replaced-cloud=\(replaceCloud ? 1 : 0) changed-since=\(left)")
+        cloudQuit = .done(wanted.count)
     }
 
     // MARK: Game sessions
