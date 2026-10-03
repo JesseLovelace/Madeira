@@ -522,6 +522,26 @@ static uint16_t madeira_target_machine(const char *exe, const char *prefix, NSSt
     return madeira_pe_machine(probe);
 }
 
+/* The 64-bit DLLs added by scripts/build/build-wine-arm64ec-farm.sh are named
+ * in arm64ec-windows/madeira-extra-dlls.txt. Returns whether `name` is one of
+ * them and this session leaves them out of the prefix. */
+static BOOL madeira_skip_extra_dll(NSString *bundle, NSString *name)
+{
+    /* 0 keeps the 64-bit DLLs outside the tracked set out of the prefix, as before they shipped. */
+    const char *off = getenv( "MADEIRA_EXTRA_DLLS" );
+    if (!off || off[0] != '0') return NO;
+    static NSSet<NSString *> *extras;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSString *list = [NSString stringWithContentsOfFile:
+            [bundle stringByAppendingPathComponent:@"arm64ec-windows/madeira-extra-dlls.txt"]
+                                                   encoding:NSUTF8StringEncoding error:nil];
+        extras = [NSSet setWithArray:[(list ?: @"") componentsSeparatedByCharactersInSet:
+                                      [NSCharacterSet newlineCharacterSet]]];
+    });
+    return name.length > 0 && [extras containsObject:name];
+}
+
 /* The bundle carries the i386 Wine set. */
 static BOOL madeira_bundle_has_i386(NSString *bundle)
 {
@@ -1189,6 +1209,7 @@ static void *wine_process_thread(void *arg) {
                 NSString *dst = [sys32Dir stringByAppendingPathComponent:dll];
                 // Remove stale symlinks and re-create (bundle path changes on reinstall)
                 [fm removeItemAtPath:dst error:nil];
+                if (use_arm64ec && madeira_skip_extra_dll(bundlePath, dll)) continue;
                 if ([fm createSymbolicLinkAtPath:dst withDestinationPath:src error:nil])
                     linked++;
             }
@@ -1208,6 +1229,7 @@ static void *wine_process_thread(void *arg) {
                 int crossLinked = 0;
                 for (NSString *f in others) {
                     NSString *dst = [sys32Dir stringByAppendingPathComponent:f];
+                    if (!use_arm64ec && madeira_skip_extra_dll(bundlePath, f)) { [fm removeItemAtPath:dst error:nil]; continue; }
                     // fileExistsAtPath FOLLOWS symlinks: YES means the session
                     // (main) pass already linked this name to a resolvable
                     // file — that arch wins, leave it.
@@ -1250,6 +1272,7 @@ static void *wine_process_thread(void *arg) {
                     for (NSString *f in files) {
                         NSString *dst = [farmDir stringByAppendingPathComponent:f];
                         [fm removeItemAtPath:dst error:nil];  // self-heal stale links on reinstall
+                        if (i == 0 && madeira_skip_extra_dll(bundlePath, f)) continue;
                         NSString *src = [archSource stringByAppendingPathComponent:f];
                         if ([fm createSymbolicLinkAtPath:dst withDestinationPath:src error:nil])
                             farmLinked++;

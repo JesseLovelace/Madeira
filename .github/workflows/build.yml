@@ -104,8 +104,33 @@ jobs:
       - if: failure()
         run: tail -150 wine/build-i386/madeira-i386-build.log || true
 
+  arm64ecfarm:
+    runs-on: xcode-27
+    timeout-minutes: 360
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: key
+        run: echo "key=arm64ec-extra-$(git rev-parse HEAD:wine)-$(git ls-files app/Madeira/arm64ec-windows | shasum | cut -c1-12)-${{ hashFiles('scripts/build/build-wine-arm64ec-farm.sh', 'scripts/build/setup-llvm-mingw.sh') }}" >> "$GITHUB_OUTPUT"
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          key: ${{ steps.key.outputs.key }}
+          path: app/Madeira/arm64ec-windows-extra
+      - name: Build the rest of Wine's 64-bit (ARM64EC) DLLs
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          brew install bison flex || true
+          export PATH="$(brew --prefix bison)/bin:$(brew --prefix flex)/bin:$PATH"
+          git submodule update --init --depth 1 wine
+          scripts/build/setup-llvm-mingw.sh
+          scripts/build/build-wine-arm64ec-farm.sh
+      - if: failure()
+        run: tail -150 wine/build-arm64ec/madeira-arm64ec-farm.log || true
+
   app:
-    needs: [llvm, fex, fexwow64, i386]
+    needs: [llvm, fex, fexwow64, i386, arm64ecfarm]
     runs-on: xcode-27
     timeout-minutes: 360
     steps:
@@ -137,6 +162,11 @@ jobs:
           key: ${{ needs.i386.outputs.key }}
           fail-on-cache-miss: true
           path: app/Madeira/i386-windows
+      - uses: actions/cache/restore@v4
+        with:
+          key: ${{ needs.arm64ecfarm.outputs.key }}
+          fail-on-cache-miss: true
+          path: app/Madeira/arm64ec-windows-extra
       # Third-party stages only change with their pins or build scripts. Each
       # script skips when its output exists, so a cache hit leaves just
       # Madeira's own code (wineserver, ntdll/win32u unix, the app) to build.
