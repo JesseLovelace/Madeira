@@ -102,7 +102,7 @@ if [[ ${#FAILED[@]} -gt 0 ]]; then
   echo "== ${#FAILED[@]} modules did not build: ${FAILED[*]}"
   if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
     echo "::warning title=ARM64EC modules that did not build (${#FAILED[@]})::${FAILED[*]}"
-    msg="$( (grep -m6 -E "error:|Error [0-9]|No rule" "$LOG" || tail -20 "$LOG") | head -12 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')"
+    msg="$( { ls "$TREE"/dlls/stdole2.tlb/ 2>&1 | head -5; grep -c . "$LOG.tlb" 2>/dev/null; tail -4 "$LOG.tlb" 2>/dev/null; grep -m2 -B6 -E "cannot find" "$LOG" || tail -20 "$LOG"; } | cut -c1-400 | head -30 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')"
     echo "::warning title=First build errors::$msg"
   fi
 fi
