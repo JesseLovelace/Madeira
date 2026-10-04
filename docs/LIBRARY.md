@@ -15,9 +15,11 @@ touch mapping).
 ## Adding games
 
 Copy a game's whole folder into **Madeira › wine › drive_c** with the Files app,
-tap **+** and choose its `.exe`. Only x86 and x64 PE executables inside drive_c
-can be added; the library stores the path relative to drive_c, so a changed
-app container path does not break entries. Adding an entry installs nothing.
+tap **+** and choose its `.exe`, or a `.bat`/`.cmd` batch file (ml1163). Only x86
+and x64 PE executables and batch files inside drive_c can be added; the library
+stores the path relative to drive_c, so a changed app container path does not
+break entries. Adding an entry installs nothing. A batch file gets a **Batch**
+badge and, like every entry, starts directly by default (see **Launch** below).
 
 The library reads the executable's PE imports (and those of the DLLs next to
 it, plus bounded scans for dynamically loaded renderer DLL names) to show a
@@ -26,7 +28,9 @@ API only when exactly one is found: it describes what the files import, not
 which renderer a game picks at run time.
 
 Library data is written atomically to `Documents/madeira-library.json`
-(version 1); covers chosen from Files are stored as thumbnails in
+(version 1; the ml1163 fields `launchMode`, `workingDirectory` and
+`startServices` are optional, so older files still load);
+covers chosen from Files are stored as thumbnails in
 `Documents/madeira-art/`. A library file that cannot be read, or that has a
 newer version, is left untouched and cannot be overwritten from the UI.
 Removing an entry never removes the game's files or saves.
@@ -66,10 +70,19 @@ Removing an entry never removes the game's files or saves.
   Off/1/2/4 GB, off by default; sync engine, Fastsync by default), the interface
   switch and **Credits** (the last section). Display applies from the next session or FPS limit change; Memory &
   sync after a restart. They write `env.MADEIRA_PROMOTE`, `swap-mb`,
-  `inproc-sync` and `env.MADEIRA_FASTSYNC` in `Documents/madeira.cfg`, keeping
-  every other line. With neither sync key set the engine is fastsync
-  (`madeira_cfg_sync_engine` in `build/madeira_cfg.h`); `inproc-sync = 1` selects
-  madsync.
+  `env.MADEIRA_SWAP_COVERAGE`, `inproc-sync` and `env.MADEIRA_FASTSYNC` in
+  `Documents/madeira.cfg`, keeping every other line. With neither sync key set
+  the engine is fastsync (`madeira_cfg_sync_engine` in `build/madeira_cfg.h`);
+  `inproc-sync = 1` selects madsync.
+- **Swap coverage** (Memory & sync, `env.MADEIRA_SWAP_COVERAGE`) picks which
+  allocations the swap tier backs: large ones only (8 MB+, classic, the
+  default), all of 1 MB+ (`blocks`), those plus overflow (`wide`), or **Whole
+  reservations 4 MB+** (`broad`, ml1257: every new reservation of at least
+  `swap-min-mb`, 4 MB by default, below FEX's band is backed whole when it is
+  made, decommits punch holes, and `swap-mb` caps the disk it uses: a soft
+  cap, checked when a block is backed).
+  Without the key, `swap-mode = 2` in madeira.cfg means broad and the picker
+  shows it; choosing large allocations then writes `classic` explicitly.
 
 ## Game details
 
@@ -94,18 +107,84 @@ starting screen takes over (or an error is shown). A profile holds:
   uncapped, so the choice is hidden and a saved 30 runs as 60);
 - reduced-precision x87: off by default, as in FEX; only an explicit choice
   exports `FEX_X87REDUCEDPRECISION=1`;
+- **AVX and AVX2**: off by default, as in FEX's iOS build; only an explicit
+  choice exports `MADEIRA_FEX_AVX=1`, which makes the ARM64EC FEX module report
+  and emulate AVX/AVX2 for a game built for AVX processors (64-bit games; WOW64
+  has no AVX);
 - **CPU cores reported** (Automatic, 1, 2, 4 or 6) and **D3D9 anisotropic
   filtering** (Application default, up to 1×, 2×, 4× or 8×): only a choice
   other than the default exports `MADEIRA_CPU_COUNT` (wine) or
-  `DXMT_D9_ANISO_LIMIT` (DXMT); the defaults export nothing. The library
-  exports no other engine switch;
-- launch arguments (double-quoted tokens, at most 64 and 4 KB in total; not
-  for Steam games, which Madeira Dock starts with Steam's own launch option);
+  `DXMT_D9_ANISO_LIMIT` (DXMT); the defaults export nothing. AVX above, frame
+  generation below and the game's own config lines are the library's other
+  engine switches;
+- **Frame generation (experimental)**, off by default: exports
+  `MADEIRA_FRAMEGEN=1`, and DXMT's present path (D3D11 and D3D12 alike) shows a
+  MetalFX-interpolated frame between every two game frames; FPS limits do not
+  apply while it is on. The Desktop's page has it too;
+- launch arguments (double-quoted tokens, at most 64 and 4 KB in total, the
+  whole command included; not for Steam games, which start with Steam's own
+  launch option, through Madeira Dock or as **The game**), in their own section
+  with chips for common flags (`-dx11`, `-dx12`, `-dx10`, `-dx9`, `-windowed`,
+  `-fullscreen`, `-nosplash`; the renderer flags exclude each other, as do the
+  window flags) and the command line the next start runs (with a **Launch**
+  choice above, what starts the program: explorer.exe or cmd.exe with its
+  whole command);
 - performance overlay, live logs and touch controls for the session, with the
   controls' **opacity** and overall **size**. The touch layout itself is saved
-  per game from the in-game editor.
+  per game from the in-game editor;
+- **Advanced › This game's config**: lines in madeira.cfg's syntax for this
+  game only. Each launch writes them to `Application Support/madeira-game.cfg`
+  and exports `MADEIRA_CFG_GAME` (unset when there are none): a key set there
+  wins over madeira.cfg wherever the runtime reads it (`build/madeira_cfg.h`),
+  `env.NAME` lines are exported after madeira.cfg's, and `dxmt` options are
+  added to madeira.cfg's (all joined with `;`, as `DXMT_CONFIG` requires; DXMT
+  reads at most 259 characters of it and nothing from a longer value, so the
+  app logs an error past that, ml1255).
+  Settings the app reads itself at launch (such as `pool`) stay global.
 
-A game you added starts directly. A Steam game's page (`docs/STEAM_LIBRARY.md`)
+A switch the game's page exports for a launch (the x87, AVX, CPU core,
+anisotropy and frame generation choices, the fastsync switches, the
+DirectInput controller choice) wins over the same `env.` key in madeira.cfg:
+that cfg line is skipped and logged as `[madeira-env] ml1184 KEY=... kept`.
+These keys are unset when the session ends (ml1184). The game's own config
+lines come after both and win.
+
+**Launch** (ml1163), the section above **Launch arguments**. Shown for the
+games you added and for a Steam game that starts as **The game**; not for the
+Desktop entry, nor for a Steam game started through Madeira Dock, whose desktop
+and command are Dock's:
+
+- **Start** (`launchMode`): **Directly** (nil, the default) makes the program
+  Wine's first process, with no desktop; DXMT draws straight to the screen, and
+  of the windows drawn with GDI only the small ones (launchers, message boxes)
+  are drawn over the game, not one that covers the guest desktop. **In the
+  Wine desktop** (`"desktop"`) runs
+  `explorer.exe /desktop=shell,<Resolution> "<exe>" <args>`, so every window
+  shows. A `.bat`/`.cmd` runs as `cmd.exe /c "<file>"` directly, or
+  `cmd /c "<file>"` inside the desktop. For **The game** the program is Steam's
+  (or the one chosen under **Program**) with Steam's arguments.
+- **Working folder** (`workingDirectory`): a `C:\` folder; empty means Steam's
+  working folder for **The game**, else the program's own folder. It is
+  exported as `MADEIRA_WORKDIR` (the bridge reads and clears it) whenever what
+  starts lives elsewhere: a desktop game would otherwise inherit explorer's
+  folder, and a batch file cmd.exe's. It must exist on drive C:.
+- **Start Windows services first** (`startServices`): Play writes
+  `C:\madeira-games\<entry id>.bat` (`start "" services.exe`, `cd /d` the
+  working folder, then `start "" "<exe>" <args>` or `call "<file>" <args>`),
+  and that batch is what starts, directly or in the desktop. It is for
+  launchers that need the SCM and rpcss (Steam-style COM). A batch that cannot
+  be written stops the launch with a message.
+- **Risk:** Wine stops when its first process exits. Started directly, a batch
+  file (or the services batch) that starts the game and exits closes the game
+  too, as does a launcher exe that starts the real game and exits. The details
+  page says so; start such programs in the Wine desktop, where explorer is the
+  first process. `env.MADEIRA_WAIT_CHILDREN = 1` (opt-in, in madeira.cfg or the
+  game's own config) keeps a direct session while a child started in the last
+  minute before the first process exited still runs, but not usefully with
+  **Start Windows services first**: services.exe never exits, so the session
+  would outlast the game.
+
+A Steam game's page (`docs/STEAM_LIBRARY.md`)
 adds a **Steam** section under the library details: **Start with** Madeira
 Dock (the default) or **The game** (its own program without Steam, from Steam's
 launch configuration or chosen under **Program**), Dock's per-launch pool
@@ -133,9 +212,16 @@ in-game menu:
    game), their **Opacity** and **Size**, **Edit controls**
    (the existing editor) and the **Keyboard** (its own key window, with an
    Esc/Ctrl/Shift/Alt/Tab/Enter/arrow row; modifiers latch);
-2. the FPS limit, **Aspect & scaling**, and the mouse and pointer settings;
-3. the performance overlay and its fields (FPS, average frame time, memory
-   footprint, battery);
+2. the FPS limit, **Aspect & scaling**, **Eco mode** (the developer overlay's
+   ECO pill: guest threads at a low priority while it is on), and the mouse and
+   pointer settings;
+3. the performance overlay and its fields (FPS, average frame time, CPU load
+   with the busiest thread, GPU load with GPU time per frame, memory
+   footprint, battery, and the thermal state: Cool, Warm, Hot or Critical; a
+   change is logged as `[thermal]` while the overlay is shown), then
+   **Diagnostics**: **Capture the next frame** and **GPU sync** F1/F6/F5/F0,
+   the developer overlay's CAP and F pills, for Direct3D 12 games (shown only with
+   `MADEIRA_SESSION_DIAGNOSTICS=1`);
 4. **Quit game** in red. Quit asks the program to close with Alt+F4 through
    the normal input queue, so it can save; the session ends when it exits.
 
@@ -167,7 +253,7 @@ instead.
 ## First-run setup
 
 The code is `app/Madeira/Onboarding.swift`. It uses `JITCoordinator` for the
-JIT method and validated pairing-file import, `OnDevicePairing` for on-device
+JIT method and validated pairing-file import, `OnDevicePairing` for in-app
 pairing (iOS 27, `docs/JIT.md`), Steam sign-in
 (`docs/STEAM_SIGNIN.md`) through `SteamSignInModel`/`SteamSignInView` (the
 token stays in sign-in's Keychain store), and Madeira Dock
@@ -180,8 +266,8 @@ reaches the device through it; **Get LocalDevVPN** opens the App Store, and
 Madeira checks again with `canOpenURL` whenever it comes back to the front),
 **Set up JIT**, **Sign in to Steam**, **Prepare Madeira Dock**
 (Valve's client components, about 73 MB, only when Dock is available), done.
-The JIT page offers three ways in, **On-device** (iOS 27 and later),
-**On-device with pairing file** and **StikDebug**, or **I'll do this later**.
+The JIT page offers three ways in, **In-app** (iOS 27 and later),
+**In-app with pairing file** and **StikDebug**, or **I'll do this later**.
 Each way opens numbered steps that tick off as they are done, with **Back to
 options**. A completed pairing or a valid pairing-file import selects Built-in
 StikJIT; it does not enable JIT yet. Steam and Dock steps have **Set up later**, and the welcome
@@ -190,7 +276,7 @@ page has **Skip setup**. Finishing or skipping stores the setup revision
 the app. Setup opens on a new install, and once after an update whose
 `OnboardingRules.revision` is higher than the stored one; raise it in a release
 whose setup every existing install should see. Revision 2 (Install LocalDevVPN,
-on-device pairing, the Madeira JIT shortcut) also reopens setup for installs
+in-app pairing, the Madeira JIT shortcut) also reopens setup for installs
 that finished it before revisions (`madeiraOnboardingDone`). The JIT page is always available; Steam pages follow their feature
 switches. Setup never opens over a running session.
 
@@ -260,7 +346,8 @@ menu owns input, the game sees a connected pad at rest.
 | `MADEIRA_UI_LOG_IDLE` | on | the log view keeps parsing while hidden |
 | `MADEIRA_LOG_VIA_STDERR` | on | Swift log lines use their own file handle |
 | `MADEIRA_RUNTIME_SETTINGS` | on | no Display and Memory & sync sections in Settings |
-| `MADEIRA_SESSION_TOOLS` | on | no Aspect & scaling in the in-game menu, and a session does not save it |
+| `MADEIRA_SESSION_TOOLS` | on | no Aspect & scaling (a session does not save it) and no Diagnostics in the in-game menu |
+| `MADEIRA_SESSION_DIAGNOSTICS` | off | `1` shows the in-game menu's Diagnostics: frame capture (render-target pixels to `Documents/capture`) and GPU sync, for Direct3D 12 games |
 | `MADEIRA_SCREEN_SHAPE_RESOLUTION` | on | no Screen shape resolution choice |
 | `MADEIRA_FRONTEND_KEYBOARD` | on | Keyboard opens the game view's own keyboard instead of the key window |
 | `MADEIRA_ONBOARDING` | on | first-run setup never opens, and Settings › JIT/Steam have no **Run setup again** |
@@ -274,13 +361,15 @@ Opt-in (`env.NAME = 1`), off by default:
 | `MADEIRA_PROMOTE` | the display link also holds the panel at its maximum rate in the 60 FPS cap (Settings › Display) |
 | `MADEIRA_DEVICE_STATS` | a `[device-load]` line (thermal state, low power, screen capture) every 10 s while Wine runs |
 
-Log tags: `[frontend]`, `[display]`, `[display-shape]`, `[frontend-pointer]`, `[launch-view]`, `[startup-log]`, `[exit-report]`,
+Log tags: `[frontend]`, `[library]` (ml1163: each game's start mode, batch, services and working folder), `[display]`, `[display-shape]`, `[frontend-pointer]`, `[launch-view]`, `[startup-log]`, `[exit-report]`,
 `[session-once]`, `[library-surface]`, `[library-metadata]`, `[onboarding]`,
 `[frontend-controller]`, `[frontend-keyboard]`, `[device-load]`, `[promote]`.
 
 ## Tests
 
 `tests/host/check-frontend.py` (profiles incl. resolution and scaling,
+the ml1163 launch options (desktop or direct, batch files, working folder, the
+services batch, the command line shown),
 the engine switches a profile exports, the 30 FPS fallback, the display layout
 math, controller commands, the exit hook, and the presence of the details and
 in-game menu options), `tests/host/check-runtime-settings.py`

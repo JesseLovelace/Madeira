@@ -45,8 +45,12 @@ INT_READERS = {"madeira_cfg_int", "mad_cfg_int_pe"}
 OVERLAY = {
     "swap-mb": { "note": "Moves game data to a file on this device's storage when memory runs short, up to this size. Off by default; read at launch.", "category": "Memory & JIT pool","title": "Swap tier size", "kind": "choice",
                 "choices": [("", "Off"), ("1024", "1 GB"), ("2048", "2 GB"), ("3072", "3 GB"), ("4096", "4 GB")]},
-    "env.MADEIRA_SWAP_COVERAGE": {"category": "Memory & JIT pool", "note": "Which allocations the swap tier backs with its file (only when the tier is on). Large allocations (classic, the default): single 8 MB+ commits in the guest band. All allocations of 1 MB+ (blocks). 1 MB+ and overflow (wide): blocks plus allocations outside the band and fresh reservations.", "title": "Swap tier coverage", "kind": "choice",
-                "choices": [("", "Large allocations (8 MB+)"), ("blocks", "All allocations of 1 MB+"), ("wide", "1 MB+ and overflow")]},
+    "env.MADEIRA_SWAP_COVERAGE": {"category": "Memory & JIT pool", "note": "Which allocations the swap tier backs with its file (only when the tier is on). Large allocations (classic, the default): single 8 MB+ commits in the guest band. All allocations of 1 MB+ (blocks). 1 MB+ and overflow (wide): blocks plus allocations outside the band and fresh reservations. Whole reservations 4 MB+ (broad, ml1257): every new reservation of at least swap-min-mb (4 MB) below FEX's band backed whole when made, holes punched on decommit, swap-mb caps the disk it uses (a soft cap, checked when a block is backed). Unset: broad if swap-mode = 2, else classic.", "title": "Swap tier coverage", "kind": "choice",
+                "choices": [("", "Large allocations (8 MB+)"), ("blocks", "All allocations of 1 MB+"), ("wide", "1 MB+ and overflow"), ("broad", "Whole reservations 4 MB+ (broad)")]},
+    "swap-mode": {"category": "Memory & JIT pool", "title": "Swap tier mode (2 = broad)",
+                "note": "2 selects broad swap coverage (ml1257) when env.MADEIRA_SWAP_COVERAGE is unset; any other value, classic. The coverage key wins when set."},
+    "swap-min-mb": {"category": "Memory & JIT pool", "title": "Swap tier floor (MB)",
+                "note": "The smallest allocation the swap tier backs (ml1257): 8 MB in classic, 1 MB in blocks and wide, 4 MB in broad unless set. MADEIRA_SWAP_MIN_KB overrides it for blocks, wide and broad."},
     "inproc-sync": { "category": "Synchronisation","title": "Madsync (in-process sync)", "default": "0",
                 "note": "1 selects madsync (Settings > Sync engine > Madsync). Unset: fastsync, the default engine; 0 without env.MADEIRA_FASTSYNC: Wine standard sync."},
     "env.MADEIRA_FASTSYNC": {"category": "Synchronisation", "title": "Fastsync (in-process sync, default)", "kind": "choice",
@@ -74,8 +78,29 @@ OVERLAY = {
     "env.MADEIRA_XINPUT": {"title": "Physical controllers (XInput)"},
     "env.MADEIRA_TOUCH_XINPUT": {"title": "Touch controller as XInput player 1"},
     "env.MADEIRA_DINPUT_PAD": {"title": "DirectInput joystick from the host gamepad"},
+    # ml2100: the HID controller (build/wineserver/hidpad_ios.c, docs/CONTROLLERS.md).
+    "env.MADEIRA_PAD_MODE": {"category": "Controllers", "title": "Controller API (player 1)", "kind": "choice",
+                "note": "XInput (default): every controller is an Xbox pad. hid: player 1 becomes a HID game controller, "
+                        "a DualSense (054C:0CE6) when it is a PlayStation pad, else a generic HID gamepad, and leaves "
+                        "XInput. dualsense/generic force the identity. Read at session start.",
+                "choices": [("", "XInput (default)"), ("hid", "DirectInput / HID"), ("dualsense", "HID, always a DualSense"),
+                            ("generic", "HID, always a generic gamepad")],
+                "sources": ["app/Madeira/GamepadInput.swift"]},
+    "env.MADEIRA_HIDPAD": {"category": "Controllers",
+                "note": "Set by the app at session start from env.MADEIRA_PAD_MODE (dualsense or generic) for the "
+                        "wineserver and ntdll; not meant to be set by hand."},
+    "env.MADEIRA_HIDPAD_NAME": {"category": "Controllers",
+                "note": "Set by the app: the product string a generic HID gamepad reports (the physical pad's name)."},
+    "env.MADEIRA_HIDPAD_XINPUT": {"category": "Controllers", "title": "HID mode: keep player 1 on XInput too", "kind": "bool",
+                "default": "0",
+                "note": "1: with the HID controller on, player 1 also stays an XInput pad. Off by default, so a game "
+                        "that reads both APIs does not see the same pad twice.",
+                "sources": ["app/Madeira/GamepadInput.swift"]},
     "env.MADEIRA_PROMOTE": {"title": "Hold the display at its maximum rate"},
-    "dxmt": {"title": "DXMT options (a=b;c=d)"},
+    "dxmt": {"title": "DXMT options (a=b;c=d)",
+             "note": "Exported as DXMT_CONFIG with the options joined by ';', a library game's own dxmt options after these: "
+                     "e.g. d3d11.mipClampBC=1;d3d11.preferredMaxFrameRate=30. DXMT reads at most 259 characters of it, "
+                     "and nothing at all from a longer value (ml1255)."},
 }
 
 
