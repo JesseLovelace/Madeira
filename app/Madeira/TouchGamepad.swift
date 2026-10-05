@@ -105,10 +105,15 @@ struct TouchGamepadState {
 struct TouchPadSurface: UIViewRepresentable {
     let control: UUID
     let action: String
+    /// Points of finger travel for full deflection; nil is 35% of the view's width.
+    var radius: CGFloat? = nil
+    /// Where a finger landed, in the view's coordinates (a stick zone draws its stick there).
+    var began: ((CGPoint) -> Void)? = nil
     let changed: (CGSize, Bool) -> Void
     func makeUIView(context: Context) -> TouchPadView { TouchPadView() }
     func updateUIView(_ view: TouchPadView, context: Context) {
         view.configure(control: control, action: action, changed: changed)
+        view.radius = radius; view.began = began
     }
     static func dismantleUIView(_ view: TouchPadView, coordinator: ()) { view.releaseAll() }
 }
@@ -120,6 +125,8 @@ final class TouchPadView: UIView {
     private var action = ""
     private var changed: ((CGSize, Bool) -> Void)?
     private var previousSize = CGSize.zero
+    var radius: CGFloat?
+    var began: ((CGPoint) -> Void)?
 
     init() {
         super.init(frame: .zero)
@@ -149,6 +156,7 @@ final class TouchPadView: UIView {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         for touch in touches {
             fingers[ObjectIdentifier(touch)] = Finger(owner: UUID(), start: touch.location(in: self))
+            began?(touch.location(in: self))
         }
         update(touches)
     }
@@ -157,7 +165,7 @@ final class TouchPadView: UIView {
         guard UIApplication.shared.applicationState == .active else { interrupted(); return }
         for touch in touches {
             guard let finger = fingers[ObjectIdentifier(touch)] else { continue }
-            let point = touch.location(in: self), radius = max(1, bounds.width * 0.35)
+            let point = touch.location(in: self), radius = max(1, self.radius ?? bounds.width * 0.35)
             let (x, y) = TouchPadAction.vector(x: Double((point.x - finger.start.x) / radius),
                                               y: Double((finger.start.y - point.y) / radius))
             GamepadInput.shared.touch(owner: finger.owner, control: control,

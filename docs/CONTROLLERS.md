@@ -119,6 +119,23 @@ already has the pad they drive. The cost is the same as above, for every
 session: a game sees a controller at rest from the start and may show
 controller prompts. `0` restores the opt-in rule.
 
+## Per-control size and stick zones
+
+In the control editor, the mapping panel of the selected control has a **Size**
+slider (50–300 %): that control's own `scale`, the same value a pinch sets. The
+session menu's **Size (all controls)** multiplies every control on top of it.
+
+A controller stick can be a **stick zone** instead of a fixed stick (Controller
+tab › Stick zones › LS zone or RS zone). A zone is a rectangle of the screen
+(`TouchControl.zoneW`/`zoneH`, fractions of the screen, centred on the control's
+position; optional fields, so older layouts load unchanged). While playing it
+draws nothing until a finger lands in it; the stick then appears under that
+finger, is deflected by dragging from there and disappears when the finger
+lifts. Size sets the stick's size and travel; **Zone width** and **Zone height**
+set the rectangle, which is shown dashed while editing and dragged like any
+control. Zones sit under the other controls, so a button placed inside one
+takes its own touches.
+
 ## A controller as keyboard and mouse
 
 For a game without controller support (or with it switched off), Game details

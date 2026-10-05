@@ -1,4 +1,5 @@
 import UIKit
+import SwiftUI
 
 /// Helper to enable JIT via StikDebug/StikJIT URL scheme.
 /// Opens StikDebug with Madeira's bundled script, polls for CS_DEBUGGED,
@@ -757,7 +758,12 @@ enum StikJITHelper {
         earlyStarted = true
         var mb = 896
         if let txt = MadeiraConfig.get("pool"), let v = Int(txt), v >= 256, v <= 1152 { mb = v }
-        DispatchQueue.global(qos: .userInitiated).async {
+        // The debugger stops the whole app while it prepares the pool, page by
+        // page: seconds to half a minute. Say so first, and give the screen a
+        // moment to draw it, since nothing can be drawn during the stop.
+        EarlyJITStatus.shared.preparing = true
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.6) {
+            defer { DispatchQueue.main.async { EarlyJITStatus.shared.preparing = false } }
             earlyLock.lock()
             defer { earlyLock.unlock() }
             // A session that started in the meantime takes its own pool.
@@ -795,5 +801,32 @@ enum StikJITHelper {
         // is sticky post-detach, so an env flag is the reliable signal.
         setenv("MADEIRA_DETACHED", "1", 1)
         LogStore.shared.log("Debugger detached.", level: .success)
+    }
+}
+
+/// Whether the JIT pool is being taken ahead of Play (StikJITHelper.watchForDebugger).
+final class EarlyJITStatus: ObservableObject {
+    static let shared = EarlyJITStatus()
+    @Published var preparing = false
+}
+
+/// Shown over the app while the debugger prepares the JIT pool: the app cannot
+/// redraw or take touches until it is done.
+struct EarlyJITBanner: View {
+    @ObservedObject private var status = EarlyJITStatus.shared
+    var body: some View {
+        if status.preparing {
+            ZStack {
+                Color.black.opacity(0.45).ignoresSafeArea()
+                VStack(spacing: 10) {
+                    Image(systemName: "bolt.fill").font(.title2)
+                    Text("Setting up JIT memory").font(.headline)
+                    Text("Madeira pauses while the debugger prepares it. This can take up to half a minute.")
+                        .font(.footnote).multilineTextAlignment(.center).foregroundStyle(.secondary)
+                }
+                .padding(22).frame(maxWidth: 320)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+            }
+        }
     }
 }

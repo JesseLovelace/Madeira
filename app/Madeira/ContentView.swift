@@ -3626,6 +3626,21 @@ struct TouchControl: Codable, Identifiable, Equatable {
     /// (PadKeyboardMouse): "A", "RT", "D↑", ...; "LS"/"RS" for a key stick.
     /// Optional, so layouts saved before it existed still decode.
     var padBinding: String?
+    /// A stick zone: with a controller stick action (LS or RS) and these set, the
+    /// control is an invisible rectangle, this fraction of the screen wide and
+    /// high, centred on nx/ny. A touch anywhere in it puts the stick under the
+    /// finger for as long as it is held. Optional, so older layouts still decode.
+    var zoneW: Double?
+    var zoneH: Double?
+    var isZone: Bool { zoneW != nil && zoneH != nil && action.isPadStick }
+    /// The zone's size as plain numbers, for the editor's sliders.
+    var zoneWValue: Double { get { zoneW ?? 0.4 } set { zoneW = newValue } }
+    var zoneHValue: Double { get { zoneH ?? 0.7 } set { zoneH = newValue } }
+    /// The zone's rectangle on a screen of this size.
+    func zoneRect(in size: CGSize) -> CGRect {
+        let w = CGFloat(zoneW ?? 0) * size.width, h = CGFloat(zoneH ?? 0) * size.height
+        return CGRect(x: CGFloat(nx) * size.width - w / 2, y: CGFloat(ny) * size.height - h / 2, width: w, height: h)
+    }
 }
 
 final class TouchControlsModel: ObservableObject {
@@ -3725,6 +3740,7 @@ final class TouchControlsModel: ObservableObject {
                           width: barW + 20, height: 68).contains(p) { return true }
         guard visible else { return false }
         for c in controls {
+            if c.isZone { if c.zoneRect(in: bounds.size).contains(p) { return true }; continue }
             let r = Self.diameter(c) / 2
             let cx = CGFloat(c.nx) * bounds.width
             let cy = CGFloat(c.ny) * bounds.height
@@ -3845,10 +3861,15 @@ struct TouchControlsOverlay: View {
     /// neighbours sit further apart than that, so nothing merges until it is
     /// moved almost touching. Before 26 the same views stack as plain material.
     @ViewBuilder private func controls(_ screen: CGSize, session: Bool) -> some View {
-        let buttons = ForEach(m.controls) { c in
-            TouchControlButton(control: c, screen: screen)
-                // A library session's Control opacity; full while editing.
-                .opacity(session && !m.editing ? library.opacity : 1)
+        // Stick zones go underneath, so a button placed inside one takes its own touches.
+        let ordered = m.controls.filter(\.isZone) + m.controls.filter { !$0.isZone }
+        let buttons = ForEach(ordered) { c in
+            Group {
+                if c.isZone { TouchStickZone(control: c, screen: screen) }
+                else { TouchControlButton(control: c, screen: screen) }
+            }
+            // A library session's Control opacity; full while editing.
+            .opacity(session && !m.editing ? library.opacity : 1)
         }
         if #available(iOS 26.0, *) {
             GlassEffectContainer(spacing: 12) {
@@ -4254,6 +4275,94 @@ struct TouchControlButton: View {
     }
 }
 
+/// A stick zone (TouchControl.isZone): nothing is drawn while playing until a
+/// finger lands in the rectangle; the stick then appears under that finger, is
+/// deflected by dragging from there, and goes when the finger lifts. While
+/// editing, the rectangle is shown and dragged like any control; its width,
+/// height and the stick's size are sliders in the mapping panel.
+struct TouchStickZone: View {
+    let control: TouchControl
+    let screen: CGSize
+    @ObservedObject private var m = TouchControlsModel.shared
+    @State private var origin: CGPoint?
+    @State private var vector = CGSize.zero
+    @State private var dragBase: CGPoint?
+
+    private var rect: CGRect { control.zoneRect(in: screen) }
+    private var diameter: CGFloat { TouchControlsModel.diameter(control) }
+    private var isSelected: Bool { m.editing && m.selected == control.id }
+
+    var body: some View {
+        ZStack {
+            if m.editing {
+                RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.08))
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(.white.opacity(isSelected ? 0.95 : 0.45),
+                            style: StrokeStyle(lineWidth: isSelected ? 2 : 1, dash: [7, 5]))
+                Text("\(control.action.label) zone").font(.caption.weight(.semibold)).foregroundStyle(.white.opacity(0.8))
+            } else {
+                Color.clear
+                if let origin {
+                    Circle().fill(.white.opacity(0.55))
+                        .frame(width: diameter * 0.42, height: diameter * 0.42)
+                        .offset(x: vector.width * diameter * 0.29, y: vector.height * diameter * 0.29)
+                        .frame(width: diameter, height: diameter)
+                        .glassFace(GlassShape(circle: true))
+                        .position(origin)
+                        .allowsHitTesting(false)
+                }
+            }
+        }
+        .frame(width: rect.width, height: rect.height)
+        .contentShape(Rectangle())
+        .overlay {
+            if let action = control.action.padName, !m.editing {
+                // Full deflection at the same distance as a fixed stick of this size.
+                TouchPadSurface(control: control.id, action: action, radius: diameter * 0.35,
+                                began: { origin = $0 }) { value, down in
+                    vector = value
+                    if !down { origin = nil }
+                }
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if isSelected {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    m.controls.removeAll { $0.id == control.id }
+                    m.selected = nil
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 22, height: 22)
+                        .background(Circle().fill(.red.opacity(0.85)))
+                }
+                .buttonStyle(.plain)
+                .offset(x: 8, y: -8)
+            }
+        }
+        .onDisappear { origin = nil; vector = .zero }
+        .onChange(of: m.editing) { _, _ in origin = nil; vector = .zero }
+        .onChange(of: screen) { _, _ in origin = nil; vector = .zero }
+        .position(x: rect.midX, y: rect.midY)
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { v in
+                    guard m.editing else { return }
+                    m.selected = control.id
+                    guard let i = m.index(of: control.id) else { return }
+                    if dragBase == nil { dragBase = CGPoint(x: control.nx, y: control.ny) }
+                    let b = dragBase ?? .zero
+                    m.controls[i].nx = min(max(b.x + Double(v.translation.width  / screen.width),  0.03), 0.97)
+                    m.controls[i].ny = min(max(b.y + Double(v.translation.height / screen.height), 0.03), 0.97)
+                }
+                .onEnded { _ in dragBase = nil },
+            including: m.editing ? .all : .subviews
+        )
+    }
+}
+
 /// ml645 — the mapping panel. Shown for the selected control in edit mode.
 struct MappingPanel: View {
     let control: TouchControl
@@ -4269,9 +4378,21 @@ struct MappingPanel: View {
                 tabButton(1, "gamecontroller")
             }
             Rectangle().fill(.white.opacity(0.15)).frame(height: 1)
+            // This control's own size (the pinch sets the same value); the session
+            // menu's Size multiplies every control on top of it.
+            sliderRow("Size", \.scale, 0.5...3.0)
+            Rectangle().fill(.white.opacity(0.15)).frame(height: 1)
             ScrollView {
-                (tab == 0 ? AnyView(keyboardTab) : AnyView(controllerTab))
-                    .padding(10)
+                VStack(alignment: .leading, spacing: 12) {
+                    if control.isZone {
+                        VStack(spacing: 4) {
+                            sliderRow("Zone width", \.zoneWValue, 0.1...1.0)
+                            sliderRow("Zone height", \.zoneHValue, 0.1...1.0)
+                        }
+                    }
+                    (tab == 0 ? AnyView(keyboardTab) : AnyView(controllerTab))
+                }
+                .padding(10)
             }
         }
         .frame(width: layout.size.width, height: layout.size.height)
@@ -4279,6 +4400,23 @@ struct MappingPanel: View {
         .clipShape(RoundedRectangle(cornerRadius: 18))
         .overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.18), lineWidth: 1))
         .position(layout.center)
+    }
+
+    /// A labelled slider on one numeric field of this control.
+    private func sliderRow(_ title: String, _ field: WritableKeyPath<TouchControl, Double>,
+                           _ range: ClosedRange<Double>) -> some View {
+        let value = Binding<Double>(
+            get: { m.index(of: control.id).map { m.controls[$0][keyPath: field] } ?? range.lowerBound },
+            set: { new in if let i = m.index(of: control.id) { m.controls[i][keyPath: field] = new } })
+        return HStack(spacing: 8) {
+            Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.7))
+                .frame(width: 78, alignment: .leading)
+            Slider(value: value, in: range).tint(.white)
+            Text("\(Int((value.wrappedValue * 100).rounded()))%")
+                .font(.system(size: 11).monospacedDigit()).foregroundStyle(.white.opacity(0.7))
+                .frame(width: 40, alignment: .trailing)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 4)
     }
 
     private struct Placement { var center: CGPoint; var size: CGSize }
@@ -4297,7 +4435,10 @@ struct MappingPanel: View {
     private var layout: Placement {
         let cx = CGFloat(control.nx) * screen.width
         let cy = CGFloat(control.ny) * screen.height
-        let r  = TouchControlsModel.diameter(control) / 2
+        // Half extents: a stick zone is a rectangle, everything else a circle.
+        let zone = control.zoneRect(in: screen)
+        let r  = control.isZone ? zone.height / 2 : TouchControlsModel.diameter(control) / 2
+        let rw = control.isZone ? zone.width / 2 : r
         let gap: CGFloat = 14, edge: CGFloat = 8
 
         for size in [CGSize(width: 340, height: 236),
@@ -4311,11 +4452,11 @@ struct MappingPanel: View {
             if cy - r - gap - size.height >= edge {
                 return Placement(center: CGPoint(x: clampX, y: cy - r - gap - size.height / 2), size: size)
             }
-            if cx + r + gap + size.width <= screen.width - edge {
-                return Placement(center: CGPoint(x: cx + r + gap + size.width / 2, y: clampY), size: size)
+            if cx + rw + gap + size.width <= screen.width - edge {
+                return Placement(center: CGPoint(x: cx + rw + gap + size.width / 2, y: clampY), size: size)
             }
-            if cx - r - gap - size.width >= edge {
-                return Placement(center: CGPoint(x: cx - r - gap - size.width / 2, y: clampY), size: size)
+            if cx - rw - gap - size.width >= edge {
+                return Placement(center: CGPoint(x: cx - rw - gap - size.width / 2, y: clampY), size: size)
             }
         }
         // Nothing fits alongside — smallest panel, corner furthest from the
@@ -4402,6 +4543,17 @@ struct MappingPanel: View {
                                            ("LT", .pad("LT")), ("RT", .pad("RT"))])
             section("Sticks", [("LS", .pad("LS")), ("RS", .pad("RS")),
                                ("L3", .pad("L3")), ("R3", .pad("R3"))])
+            // An area of the screen instead of a fixed stick: touch anywhere in it
+            // and the stick appears under the finger until it lifts.
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Stick zones")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.45))
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 80), spacing: 6)], spacing: 6) {
+                    zoneChip("LS zone", "LS")
+                    zoneChip("RS zone", "RS")
+                }
+            }
             // Start and Select are XInput's Menu and View; the layout keeps the
             // XInput names, the chips and the buttons read Start/Select.
             section("System", [("Start", .pad("Menu")), ("Select", .pad("View")),
@@ -4450,11 +4602,35 @@ struct MappingPanel: View {
         }
     }
 
-    private func chip(_ label: String, _ action: ControlAction) -> some View {
-        let on = control.action == action
+    /// Makes this control a stick zone for LS or RS. A new zone starts as the
+    /// left or right 40% of the screen, with a stick larger than a button.
+    private func zoneChip(_ label: String, _ stick: String) -> some View {
+        let on = control.isZone && control.action == .pad(stick)
         return Button {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            if let i = m.index(of: control.id) { m.controls[i].action = action }
+            guard let i = m.index(of: control.id) else { return }
+            if !m.controls[i].isZone {
+                m.controls[i].zoneW = 0.4; m.controls[i].zoneH = 0.7
+                m.controls[i].nx = stick == "LS" ? 0.22 : 0.78; m.controls[i].ny = 0.6
+                m.controls[i].scale = max(m.controls[i].scale, 1.8)
+            }
+            m.controls[i].action = .pad(stick)
+        } label: {
+            Text(label)
+                .font(.system(size: 12, weight: .medium)).lineLimit(1).minimumScaleFactor(0.55)
+                .foregroundStyle(.white.opacity(0.55))
+                .frame(maxWidth: .infinity, minHeight: 30)
+                .background(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(on ? 0.36 : 0.12)))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func chip(_ label: String, _ action: ControlAction) -> some View {
+        let on = control.action == action && !control.isZone
+        return Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            // Any ordinary action ends a stick zone.
+            if let i = m.index(of: control.id) { m.controls[i].zoneW = nil; m.controls[i].zoneH = nil; m.controls[i].action = action }
         } label: {
             Text(label)
                 .font(.system(size: 12, weight: .medium))
