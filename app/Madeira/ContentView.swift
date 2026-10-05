@@ -3871,7 +3871,14 @@ struct TouchControlsOverlay: View {
             // A library session's Control opacity; full while editing.
             .opacity(session && !m.editing ? library.opacity : 1)
         }
-        if #available(iOS 26.0, *) {
+        // A session's Opacity below full: plain translucent controls, which fade
+        // (see FlatGlassKey); at full opacity, and while editing, the glass.
+        let flat = session && !m.editing && library.opacity < 0.98
+        if flat {
+            ZStack { buttons }
+                .frame(width: screen.width, height: screen.height, alignment: .topLeading)
+                .environment(\.flatGlass, true)
+        } else if #available(iOS 26.0, *) {
             GlassEffectContainer(spacing: 12) {
                 ZStack { buttons }
                     .frame(width: screen.width, height: screen.height, alignment: .topLeading)
@@ -4009,15 +4016,37 @@ extension View {
     /// layer over the container's other children, so a label that is merely a
     /// sibling of its glass ends up blurred underneath it; a label that is the
     /// glass view's own content is drawn on top, as the system's buttons are.
-    @ViewBuilder func glassFace(_ g: GlassShape) -> some View {
-        if #available(iOS 26.0, *) {
+    func glassFace(_ g: GlassShape) -> some View { modifier(GlassFace(g: g)) }
+}
+
+/// Set on the touch controls while a session's Opacity is below full: system
+/// glass is composited as its own layer and does not fade with `.opacity`, so
+/// a see-through control is drawn as a plain translucent shape instead.
+private struct FlatGlassKey: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+    var flatGlass: Bool {
+        get { self[FlatGlassKey.self] }
+        set { self[FlatGlassKey.self] = newValue }
+    }
+}
+
+private struct GlassFace: ViewModifier {
+    let g: GlassShape
+    @Environment(\.flatGlass) private var flat
+    @ViewBuilder func body(content: Content) -> some View {
+        if flat {
+            content.background {
+                g.shape.fill(.white.opacity(0.22))
+                if let tint = g.tint { g.shape.fill(tint.opacity(0.5)) }
+            }
+        } else if #available(iOS 26.0, *) {
             if let tint = g.tint {
-                self.glassEffect(.regular.tint(tint.opacity(0.55)), in: g.shape)
+                content.glassEffect(.regular.tint(tint.opacity(0.55)), in: g.shape)
             } else {
-                self.glassEffect(.regular, in: g.shape)
+                content.glassEffect(.regular, in: g.shape)
             }
         } else {
-            self.background {
+            content.background {
                 g.shape.fill(.ultraThinMaterial)
                 if let tint = g.tint { g.shape.fill(tint.opacity(0.35)) }
             }
