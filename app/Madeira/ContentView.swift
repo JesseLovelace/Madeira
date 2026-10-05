@@ -4076,6 +4076,11 @@ struct TouchControlButton: View {
     @State private var dragBase: CGPoint?
     @State private var stickDir: Int = -1
     @State private var padVector = CGSize.zero
+    /// True while this control's gesture has a finger down. SwiftUI resets it when
+    /// the gesture ends AND when it is cancelled (a second finger elsewhere, a
+    /// system gesture), which onEnded alone does not report: a key or mouse
+    /// button pressed by a cancelled gesture stayed down in the game.
+    @GestureState private var touching = false
 
     private var diameter: CGFloat { TouchControlsModel.diameter(control) }
     private var size: CGSize { TouchControlsModel.size(control) }
@@ -4208,16 +4213,19 @@ struct TouchControlButton: View {
                 }
             }
         }
-        .onDisappear { if control.action.isPad { padVector = .zero; isDown = false } }
-        .onChange(of: m.editing) { _, _ in if control.action.isPad { padVector = .zero; isDown = false } }
+        .onDisappear { releaseHeld(control.action); if control.action.isPad { padVector = .zero; isDown = false } }
+        .onChange(of: touching) { _, now in if !now { releaseHeld(control.action) } }
+        .onChange(of: m.editing) { _, _ in releaseHeld(control.action); if control.action.isPad { padVector = .zero; isDown = false } }
         .onChange(of: screen) { _, _ in if control.action.isPad { padVector = .zero; isDown = false } }
         .onChange(of: control.action) { old, new in
+            releaseHeld(old)
             if old.isPad || new.isPad { padVector = .zero; isDown = false }
         }
         .position(x: CGFloat(control.nx) * screen.width,
                   y: CGFloat(control.ny) * screen.height)
         .gesture(
             DragGesture(minimumDistance: 0)
+                .updating($touching) { _, state, _ in state = true }
                 .onChanged { v in
                     if m.editing {
                         m.selected = control.id
@@ -4246,6 +4254,27 @@ struct TouchControlButton: View {
                 },
             including: control.action.isPad && !m.editing ? .subviews : .all
         )
+    }
+
+    /// Lets go of whatever this control holds in the game: the keys of a key
+    /// stick, or a pressed key or mouse button. `action` is the action that was
+    /// pressed (the old one, when the control has just been remapped). Safe to
+    /// call when nothing is held. Controller actions release in TouchPadSurface.
+    private func releaseHeld(_ action: ControlAction) {
+        if let q = action.stickKeys {
+            guard stickDir != -1 || isDown else { return }
+            for vk in stickKeys(stickDir, q) { winios_post_key(vk, 0) }
+            stickDir = -1; isDown = false
+        } else if isDown, !action.isPad {
+            isDown = false
+            fputs("[touch-control] release \(action.label) (gesture ended, cancelled or the control went away)\n", stderr)
+            switch action {
+            case .key(let vk): winios_post_key(vk, 0)
+            case .mouseLeft:   winios_pointer(0, 0, 0x0004, 0)
+            case .mouseRight:  winios_pointer(0, 0, 0x0010, 0)
+            default: break
+            }
+        }
     }
 
     /// 8-way snap. Screen y grows downward, so measure clockwise from "up".
@@ -4348,7 +4377,7 @@ struct TouchStickZone: View {
             if let action = control.action.padName, !m.editing {
                 // Full deflection at the same distance as a fixed stick of this size.
                 TouchPadSurface(control: control.id, action: action, radius: diameter * 0.35,
-                                began: { origin = $0 }) { value, down in
+                                yieldsToControls: true, began: { origin = $0 }) { value, down in
                     vector = value
                     if !down { origin = nil }
                 }

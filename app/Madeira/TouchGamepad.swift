@@ -107,13 +107,15 @@ struct TouchPadSurface: UIViewRepresentable {
     let action: String
     /// Points of finger travel for full deflection; nil is 35% of the view's width.
     var radius: CGFloat? = nil
+    /// A stick zone: a touch on any other control is not this view's.
+    var yieldsToControls = false
     /// Where a finger landed, in the view's coordinates (a stick zone draws its stick there).
     var began: ((CGPoint) -> Void)? = nil
     let changed: (CGSize, Bool) -> Void
     func makeUIView(context: Context) -> TouchPadView { TouchPadView() }
     func updateUIView(_ view: TouchPadView, context: Context) {
         view.configure(control: control, action: action, changed: changed)
-        view.radius = radius; view.began = began
+        view.radius = radius; view.began = began; view.yieldsToControls = yieldsToControls
     }
     static func dismantleUIView(_ view: TouchPadView, coordinator: ()) { view.releaseAll() }
 }
@@ -127,6 +129,23 @@ final class TouchPadView: UIView {
     private var previousSize = CGSize.zero
     var radius: CGFloat?
     var began: ((CGPoint) -> Void)?
+    var yieldsToControls = false
+
+    /// A stick zone covers part of the screen that other controls sit in. Whatever
+    /// order the views end up in, a touch on one of those controls is theirs.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if yieldsToControls, let window {
+            let p = convert(point, to: window), bounds = window.bounds
+            for c in TouchControlsModel.shared.controls where !c.isZone {
+                let size = TouchControlsModel.size(c)
+                let frame = CGRect(x: CGFloat(c.nx) * bounds.width - size.width / 2,
+                                   y: CGFloat(c.ny) * bounds.height - size.height / 2,
+                                   width: size.width, height: size.height)
+                if frame.contains(p) { return nil }
+            }
+        }
+        return super.hitTest(point, with: event)
+    }
 
     init() {
         super.init(frame: .zero)
@@ -148,6 +167,7 @@ final class TouchPadView: UIView {
     override func didMoveToWindow() { super.didMoveToWindow(); if window == nil { releaseAll() } }
     @objc private func interrupted() { releaseAll(); changed?(.zero, false) }
     func releaseAll() {
+        if !fingers.isEmpty { fputs("[touch-pad] release-all \(action) fingers=\(fingers.count)\n", stderr) }
         for finger in fingers.values {
             GamepadInput.shared.touch(owner: finger.owner, control: control, value: nil)
         }
@@ -158,6 +178,7 @@ final class TouchPadView: UIView {
             fingers[ObjectIdentifier(touch)] = Finger(owner: UUID(), start: touch.location(in: self))
             began?(touch.location(in: self))
         }
+        if !touches.isEmpty, action != "LS", action != "RS" { fputs("[touch-pad] down \(action) fingers=\(fingers.count)\n", stderr) }
         update(touches)
     }
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) { update(touches) }
@@ -180,6 +201,7 @@ final class TouchPadView: UIView {
             guard let finger = fingers.removeValue(forKey: ObjectIdentifier(touch)) else { continue }
             GamepadInput.shared.touch(owner: finger.owner, control: control, value: nil)
         }
+        if !touches.isEmpty, action != "LS", action != "RS" { fputs("[touch-pad] up \(action) fingers=\(fingers.count)\n", stderr) }
         if fingers.isEmpty { changed?(.zero, false) }
     }
 }
