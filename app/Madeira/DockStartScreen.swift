@@ -296,6 +296,13 @@ final class DockStartScreen: ObservableObject {
     /// frames reached the screen since the start began.
     func poll(_ model: LibraryModel, rendered: Bool) {
         guard active else { return }
+        // The JIT memory ran out while the game was loading: its DLLs fail to load
+        // and the game never shows a window, so say why instead of waiting.
+        if failure == nil, model.launching, madeira_jit_pool_exhausted() != 0 {
+            failure = "The JIT memory ran out while the game was loading. How much Madeira gets varies each time "
+                + "the app starts, and this time it was too little for this game. Close Madeira and open it again."
+            LogStore.shared.log("[dock-status] JIT pool exhausted during the start", level: .error)
+        }
         let elapsed = Date().timeIntervalSince(started)
         var report: MadeiraDock.Report?
         // The host's result: a start that stopped keeps the starting screen with the report's words.

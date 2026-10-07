@@ -13,6 +13,8 @@ int wine_process_start(const char *prefix_path);
 
 // Check if Wine process is running
 int wine_process_is_running(void);
+/// How often the JIT pool had no room for something the session loaded; 0 while all is well.
+int madeira_jit_pool_exhausted(void);
 
 // Session exit report (the library front end). ntdll calls
 // wine_launched_process_did_exit() when the program the app launched (the

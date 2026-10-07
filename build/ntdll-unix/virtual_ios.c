@@ -7638,6 +7638,11 @@ static int ios_wow_addr_in_any_window( const void *addr )
     return 0;
 }
 
+/* How often the JIT pool had no room for an image or an anonymous RWX range.
+ * The app reads it (madeira_jit_pool_exhausted) to say so on the starting
+ * screen: the load fails and the game otherwise just never appears. */
+int ios_jit_pool_exhausted;
+
 /* The same question for callers outside this file that do not run on a guest
  * thread (the Mach exception handler). */
 int ios_wow_addr_in_guest_window( const void *addr )
@@ -12788,6 +12793,7 @@ static inline int mprotect_exec( void *base, size_t size, int unix_prot )
                 {
                     ERR("iOS JIT: pool exhausted for anon RWX %p+0x%lx\n",
                         base, (unsigned long)size);
+                    __atomic_add_fetch( &ios_jit_pool_exhausted, 1, __ATOMIC_RELAXED );
                     dprintf(2, "[jit-pool] EXHAUSTED (anon RWX): want=0x%lx bump=0x%lx/0x%lx tail_resv=0x%lx freelist=%d — FAILING allocation\n",
                             (unsigned long)alloc_size, (unsigned long)jit_pool_offset, (unsigned long)jit_pool_size,
                             (unsigned long)ios_jit_tail_reserved, ios_pool_free_count);
@@ -13025,6 +13031,7 @@ static inline int mprotect_exec( void *base, size_t size, int unix_prot )
                  * call into the module BUS-fault-looped, locking the whole
                  * session. -1/ENOMEM propagates up as a failed module load /
                  * failed process start, which the shell reports and survives. */
+                __atomic_add_fetch( &ios_jit_pool_exhausted, 1, __ATOMIC_RELAXED );
                 dprintf(2, "[jit-pool] EXHAUSTED (image %p+0x%lx): want=0x%lx bump=0x%lx/0x%lx tail_resv=0x%lx freelist=%d — FAILING the load (was: silent BUS loop)\n",
                         image_base, (unsigned long)image_size, (unsigned long)alloc_size,
                         (unsigned long)jit_pool_offset, (unsigned long)jit_pool_size,

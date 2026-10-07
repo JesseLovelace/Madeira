@@ -1753,6 +1753,12 @@ int wine_process_is_running(void) {
     return g_wine_running;
 }
 
+/* The JIT pool ran out during this session (virtual_ios.c counts it). */
+int madeira_jit_pool_exhausted(void) {
+    extern int ios_jit_pool_exhausted;
+    return __atomic_load_n(&ios_jit_pool_exhausted, __ATOMIC_RELAXED);
+}
+
 int madeira_write_continue_flag(void) {
     if (!g_prefix_path) return -1;
     char path[1024];

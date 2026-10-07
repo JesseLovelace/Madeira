@@ -777,6 +777,12 @@ enum StikJITHelper {
             detachDebugger()
             earlyPool = pool
             earlyDetached = true
+            // Below about 500 MB a large game can run out while it loads (one Steam
+            // game needs 500 MB by its menu). Known here, before a game is chosen.
+            if pool.size < 512 << 20 {
+                let mb = pool.size >> 20
+                DispatchQueue.main.async { EarlyJITStatus.shared.smallPoolMB = mb }
+            }
             LogStore.shared.log(String(format: "[early-jit] pool %dMB ready and debugger detached in %.0f ms",
                                        pool.size >> 20, (CFAbsoluteTimeGetCurrent() - t0) * 1000), level: .success)
         }
@@ -808,6 +814,8 @@ enum StikJITHelper {
 final class EarlyJITStatus: ObservableObject {
     static let shared = EarlyJITStatus()
     @Published var preparing = false
+    /// The pool this app run got, when it is small enough that big games may not start.
+    @Published var smallPoolMB: Int?
 }
 
 /// Shown over the app while the debugger prepares the JIT pool: the app cannot
@@ -827,6 +835,25 @@ struct EarlyJITBanner: View {
                 .padding(22).frame(maxWidth: 320)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
             }
+        }
+    }
+}
+
+/// Tells the user at app start that this run's JIT pool is small, while
+/// restarting is still cheap: nothing is running yet.
+struct SmallPoolNotice: ViewModifier {
+    @ObservedObject private var status = EarlyJITStatus.shared
+    func body(content: Content) -> some View {
+        content.alert("Little JIT memory this time",
+                      isPresented: Binding(get: { status.smallPoolMB != nil }, set: { if !$0 { status.smallPoolMB = nil } })) {
+            Button("Close Madeira") {
+                LogStore.shared.log("[early-jit] closed by the user for a larger pool")
+                exit(0)
+            }
+            Button("Continue anyway", role: .cancel) { status.smallPoolMB = nil }
+        } message: {
+            Text("Madeira got \(status.smallPoolMB ?? 0) MB of JIT memory on this start; it varies each time the app opens. "
+                 + "Large games may hang while starting or stutter. Close Madeira and open it again for another try.")
         }
     }
 }

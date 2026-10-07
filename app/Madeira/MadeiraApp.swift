@@ -7,6 +7,7 @@ struct MadeiraApp: App {
             ContentView()
                 .modifier(ClaimGamepadEvents())
                 .overlay { EarlyJITBanner() }
+                .modifier(SmallPoolNotice())
                 .onAppear {
                     GamepadInput.shared.start()
                     HardwareInput.shared.start()

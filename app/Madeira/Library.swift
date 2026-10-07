@@ -3504,7 +3504,7 @@ struct LibraryHUD: View {
                 Text(entry.title).font(.title2.bold()).multilineTextAlignment(.center)
                 if dockStart.failure == nil { ProgressView().tint(.white) }
                 if let failure = dockStart.failure {
-                    Text("Madeira Dock stopped").font(.headline)
+                    Text(failure.hasPrefix("The JIT memory") ? "Out of JIT memory" : "Madeira Dock stopped").font(.headline)
                     Text(failure).font(.caption).multilineTextAlignment(.center).frame(maxWidth: 360)
                 } else if dockStart.active {
                     // What the Dock start is waiting for, from the host's report, and what it
