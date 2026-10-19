@@ -1,0 +1,126 @@
+diff --git a/src/launch.c b/src/launch.c
+index 339f3d8..2a1a788 100644
+--- a/src/launch.c
++++ b/src/launch.c
+@@ -56,6 +56,75 @@ static bool restore(struct saved_value *v)
+     return status == ERROR_SUCCESS;
+ }
+ 
++/* Ending another device's playing session (refusal 35), as desktop Steam's
++ * "continue launching" does: IClientUser::BKickOtherPlayingSession(), no
++ * arguments, returns bool. Its slot is not pinned for either build, so the
++ * host looks for the one IPC wrapper that names the method through a
++ * RIP-relative LEA (the check tools/check-client-layout.py makes for slot 71).
++ * Nothing is called unless exactly one slot in range names it.
++ */
++#define SH_KICK_FIRST_SLOT 200
++#define SH_KICK_LAST_SLOT 250
++typedef bool (__thiscall *kick_fn)(void *);
++
++static bool image_bounds(HMODULE module, uintptr_t *low, uintptr_t *high)
++{
++    const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)module;
++    if (!dos || dos->e_magic != IMAGE_DOS_SIGNATURE) return false;
++    const IMAGE_NT_HEADERS64 *nt = (const IMAGE_NT_HEADERS64 *)((const char *)module + dos->e_lfanew);
++    if (nt->Signature != IMAGE_NT_SIGNATURE || nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) return false;
++    *low = (uintptr_t)module;
++    *high = *low + nt->OptionalHeader.SizeOfImage;
++    return true;
++}
++
++static bool wrapper_names(uintptr_t low, uintptr_t high, uintptr_t code, const char *name)
++{
++    const size_t limit = 0x200, length = strlen(name) + 1;
++    if (code < low || code + limit > high) return false;
++    const unsigned char *p = (const unsigned char *)code;
++    for (size_t i = 0; i + 7 <= limit; ++i) {
++        if ((p[i] != 0x48 && p[i] != 0x4c) || p[i+1] != 0x8d || (p[i+2] & 0xc7) != 0x05) continue;
++        int32_t displacement;
++        memcpy(&displacement, p + i + 3, 4);
++        uintptr_t target = code + i + 7 + (intptr_t)displacement;
++        if (target >= low && target + length <= high && !memcmp((const void *)target, name, length)) return true;
++    }
++    return false;
++}
++
++static int kick_slot(HMODULE module, void *client_user)
++{
++    uintptr_t low, high;
++    if (!client_user || !image_bounds(module, &low, &high)) return -1;
++    void **table = *(void ***)client_user;
++    if ((uintptr_t)table < low || (uintptr_t)(table + SH_KICK_LAST_SLOT + 1) > high) return -1;
++    int found = -1;
++    for (int slot = SH_KICK_FIRST_SLOT; slot <= SH_KICK_LAST_SLOT; ++slot) {
++        if (!wrapper_names(low, high, (uintptr_t)table[slot], "BKickOtherPlayingSession")) continue;
++        if (found >= 0) return -1;
++        found = slot;
++    }
++    return found;
++}
++
++/* Madeira writes the answer file (MADEIRA_DOCK_SESSION_ANSWER) when the user
++ * agrees to end the other session; the host removes it once read.
++ */
++static bool session_answer_yes(const wchar_t *path)
++{
++    if (!path[0] || GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) return false;
++    HANDLE file = CreateFileW(path, GENERIC_READ | DELETE, 0, NULL, OPEN_EXISTING, 0, NULL);
++    char value[4] = {0};
++    DWORD got = 0;
++    if (file != INVALID_HANDLE_VALUE) {
++        ReadFile(file, value, sizeof(value) - 1, &got, NULL);
++        CloseHandle(file);
++    }
++    DeleteFileW(path);
++    return got >= 1 && value[0] == '1';
++}
++
+ static volatile LONG interrupted;
+ static BOOL WINAPI on_control(DWORD control)
+ {
+@@ -260,7 +329,12 @@ int sh_launch(HMODULE module, void *engine, void *client_user,
+     wchar_t session_flag[4] = {0};
+     bool session_wait = !(GetEnvironmentVariableW(L"MADEIRA_DOCK_SESSION_WAIT", session_flag, 4) == 1 &&
+                           session_flag[0] == L'0');
+-    uint64_t session_began = 0;
++    uint64_t session_began = 0, answer_checked = 0;
++    int kick = -2;   /* -2 not looked for yet, -1 unavailable, else the slot */
++    bool kicked = false;
++    wchar_t answer_path[1024] = {0};
++    DWORD answer_length = GetEnvironmentVariableW(L"MADEIRA_DOCK_SESSION_ANSWER", answer_path, 1024);
++    if (!answer_length || answer_length >= 1024) answer_path[0] = 0;
+     uint64_t wait_began = 0, retry_at = 0;
+     unsigned retries = 0;
+     int32_t logged_error = INT32_MIN;
+@@ -327,6 +401,10 @@ int sh_launch(HMODULE module, void *engine, void *client_user,
+                         if (!session_began) {
+                             session_began = o->now_ms();
+                             o->event("launch-session-wait", error);
++                            if (kick == -2) {
++                                kick = answer_path[0] ? kick_slot(module, client_user) : -1;
++                                o->event("launch-session-kick-slot", kick);
++                            }
+                         }
+                         retry_at = o->now_ms() + SH_SESSION_RETRY_MS;
+                         result_rejected = false;
+@@ -354,6 +432,20 @@ int sh_launch(HMODULE module, void *engine, void *client_user,
+                 break;
+             }
+         }
++        /* The user agreed to end the other session: ask Valve's client to, then
++         * launch again soon, with a fresh wait for the session to go.
++         */
++        if (session_began && kick >= 0 && !kicked && !seen_running &&
++            o->now_ms() - answer_checked >= 500) {
++            answer_checked = o->now_ms();
++            if (session_answer_yes(answer_path)) {
++                kicked = true;
++                bool sent = ((kick_fn)(*(void ***)client_user)[kick])(client_user);
++                o->event("launch-session-kick", sent ? 1 : 0);
++                session_began = o->now_ms();
++                if (retry_at) retry_at = o->now_ms() + 3000;
++            }
++        }
+         if (retry_at && !seen_running && o->now_ms() >= retry_at) {
+             retry_at = 0;
+             call = ((launch_fn)(*(void ***)manager)[2])(manager, &gameid, 0, 0, "");

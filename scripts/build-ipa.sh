@@ -33,6 +33,11 @@ bash "$ROOT/tools/check-prefix-template.sh" "$ROOT/app/Madeira/prefix-template.t
 if ! git -C "$ROOT/madeira-dock" apply --reverse --check "$ROOT/scripts/build/madeira-dock.patch" 2>/dev/null; then
   git -C "$ROOT/madeira-dock" apply "$ROOT/scripts/build/madeira-dock.patch"
 fi
+# madeira-dock-kick.patch: on "playing in another session", end that session
+# when the user agrees (Madeira asks during the start).
+if ! git -C "$ROOT/madeira-dock" apply --reverse --check "$ROOT/scripts/build/madeira-dock-kick.patch" 2>/dev/null; then
+  git -C "$ROOT/madeira-dock" apply "$ROOT/scripts/build/madeira-dock-kick.patch"
+fi
 log "Building Madeira Dock (dockhost.exe)"
 "$ROOT/build/madeira-dock/build.sh"
 

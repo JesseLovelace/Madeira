@@ -3477,6 +3477,12 @@ struct LibraryHUD: View {
             .preferredColorScheme(.dark)
         }.ignoresSafeArea()
         .onAppear { model.saveCurrentProfile() }
+        .alert("Game running in another session", isPresented: $dockStart.askEndOtherSession) {
+            Button("Yes, close it", role: .destructive) { dockStart.answerEndOtherSession(true) }
+            Button("No", role: .cancel) { dockStart.answerEndOtherSession(false) }
+        } message: {
+            Text("Steam says this account is playing a game on another device. Close it there so this game can start? Progress the other game has not saved is lost.")
+        }
         .onChange(of: model.menu) { _, open in
             LibraryController.shared.configure(enabled: model.enabled, ownsInput: open)
             if !open { bindsPage = false }
