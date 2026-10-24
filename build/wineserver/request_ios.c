@@ -1040,6 +1040,10 @@ static void create_dir( const char *name, struct stat *st )
     }
     if (!S_ISDIR(st->st_mode)) fatal_error( "%s is not a directory\n", name );
     if (st->st_uid != getuid()) fatal_error( "%s is not owned by you\n", name );
+    /* The folder is in the app's Documents, so a device restore brings it back
+     * with default permissions. It is ours: make it private again. */
+    if ((st->st_mode & 077) && chmod( name, 0700 ) == 0 && lstat( name, st ) == -1)
+        fatal_error( "lstat %s: %s\n", name, strerror( errno ));
     if (st->st_mode & 077) fatal_error( "%s must not be accessible by other users\n", name );
 }
 
