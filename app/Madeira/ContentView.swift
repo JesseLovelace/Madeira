@@ -1288,7 +1288,10 @@ struct ContentView: View {
                 FrontendChoice.logStartup()
                 DeviceLoadDiagnostics.start()
                 // Madeira Dock: an unconsumed sign-in transfer from an earlier run goes.
-                if wine_process_is_running() == 0 { MadeiraDock.cleanup() }
+                // Once per app run: this view can appear again while a Dock start is
+                // between writing its transfer and starting Wine.
+                if !MadeiraDock.startCleanupDone, wine_process_is_running() == 0 { MadeiraDock.cleanup() }
+                MadeiraDock.startCleanupDone = true
             }
             .onReceive(NotificationCenter.default.publisher(for: SteamSignIn.didChange)) { _ in
                 if !SteamSignIn.isSignedIn { MadeiraDock.cleanup() }

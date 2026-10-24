@@ -352,6 +352,9 @@ enum MadeiraDock {
             .appendingPathComponent("MadeiraDock", isDirectory: true).appendingPathComponent("launch.auth")
     }
 
+    /// The app-start removal of an earlier run's transfer has run.
+    @MainActor static var startCleanupDone = false
+
     /// Removes an unconsumed transfer (session end, sign-out, app start).
     @MainActor static func cleanup() {
         if let url = transferURL { try? FileManager.default.removeItem(at: url) }
