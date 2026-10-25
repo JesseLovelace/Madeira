@@ -85,6 +85,12 @@ log "Building Wine unix libraries"
 # Xcode 26 installs the Metal compiler separately; returns at once when present.
 xcodebuild -downloadComponent MetalToolchain >/dev/null 2>&1 || true
 "$ROOT/scripts/build/build-shader-headers.sh"
+# dxmt-local-share.patch: legacy shared handles for textures inside one
+# process, which the D3D12 layer opens (iOS has no cross-process sharing).
+if ! git -C "$ROOT/dxmt" apply --reverse --check "$ROOT/scripts/build/dxmt-local-share.patch" 2>/dev/null; then
+  git -C "$ROOT/dxmt" apply "$ROOT/scripts/build/dxmt-local-share.patch"
+fi
+"$ROOT/scripts/build/build-dxmt-pe.sh"
 "$ROOT/scripts/build/build-dxmt-ios.sh"
 "$ROOT/scripts/build/prepare-vcruntime.sh"
 "$ROOT/build/stage-licenses.sh"

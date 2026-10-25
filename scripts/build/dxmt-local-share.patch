@@ -1,0 +1,157 @@
+diff --git a/src/d3d11/d3d11.def b/src/d3d11/d3d11.def
+index b79deb7..5d26bce 100644
+--- a/src/d3d11/d3d11.def
++++ b/src/d3d11/d3d11.def
+@@ -3,4 +3,5 @@ EXPORTS
+     D3D11CoreCreateDevice @18
+     D3D11CreateDevice @22
+     D3D11CreateDeviceAndSwapChain @23
+-    D3D11On12CreateDevice @24
+\ No newline at end of file
++    D3D11On12CreateDevice @24
++    MadeiraSharedTextureLookup
+diff --git a/src/d3d11/d3d11_texture_device.cpp b/src/d3d11/d3d11_texture_device.cpp
+index dfc927b..7730c78 100644
+--- a/src/d3d11/d3d11_texture_device.cpp
++++ b/src/d3d11/d3d11_texture_device.cpp
+@@ -14,6 +14,65 @@
+ #include "winemetal.h"
+ #include <atomic>
+ #include <cstring>
++#include <mutex>
++#include <unordered_map>
++
++namespace dxmt {
++
++/* Textures shared without a mach port (iOS cannot register one): the shared
++ * handle names an entry in this process-local table, which another graphics
++ * runtime in the same process (the D3D12 layer) reads through the exported
++ * MadeiraSharedTextureLookup. Same-process sharing is what D3D11 -> D3D12
++ * interop of one application needs. */
++struct LocalShare {
++  obj_handle_t texture;
++  D3D11_TEXTURE2D_DESC desc;
++};
++static std::mutex g_local_share_lock;
++static std::unordered_map<uintptr_t, LocalShare> g_local_shares;
++static uintptr_t g_local_share_next = 0;
++
++static uintptr_t
++LocalShareAdd(obj_handle_t texture, const D3D11_TEXTURE2D_DESC &desc) {
++  std::lock_guard<std::mutex> lock(g_local_share_lock);
++  /* KMT-style global handle: the 0xc0000000 bits mark a global share. */
++  uintptr_t h = 0xc0000000u | ((++g_local_share_next & 0x0fffffffu) << 2);
++  NSObject_retain(texture);
++  g_local_shares[h] = {texture, desc};
++  return h;
++}
++
++static void
++LocalShareRemove(uintptr_t h) {
++  obj_handle_t texture = 0;
++  {
++    std::lock_guard<std::mutex> lock(g_local_share_lock);
++    auto it = g_local_shares.find(h);
++    if (it == g_local_shares.end())
++      return;
++    texture = it->second.texture;
++    g_local_shares.erase(it);
++  }
++  NSObject_release(texture);
++}
++
++} // namespace dxmt
++
++/* Returns the Metal texture behind a local shared handle with a reference the
++ * caller releases, and its description. */
++extern "C" BOOL WINAPI
++MadeiraSharedTextureLookup(HANDLE handle, obj_handle_t *texture, D3D11_TEXTURE2D_DESC *desc) {
++  using namespace dxmt;
++  std::lock_guard<std::mutex> lock(g_local_share_lock);
++  auto it = g_local_shares.find(reinterpret_cast<uintptr_t>(handle));
++  if (it == g_local_shares.end())
++    return FALSE;
++  NSObject_retain(it->second.texture);
++  *texture = it->second.texture;
++  if (desc)
++    *desc = it->second.desc;
++  return TRUE;
++}
+ 
+ namespace dxmt {
+ 
+@@ -33,6 +92,7 @@ private:
+   float min_lod = 0.0;
+   D3DKMT_HANDLE local_kmt_ = 0;
+   D3DKMT_HANDLE global_kmt_ = 0;
++  uintptr_t local_share_ = 0;
+ 
+   using SRVBase =
+       TResourceViewBase<tag_shader_resource_view<DeviceTexture<tag_texture>>>;
+@@ -175,6 +235,8 @@ public:
+    * ml670 keyed it on the COM pointer and never erased on destruction, so a
+    * reused address inherited a stale clamp. Ownership here makes that
+    * impossible by construction. */
++  void SetLocalShare(uintptr_t h) { local_share_ = h; }
++
+   uint32_t MipBias() const { return mip_bias_; }
+   void SetMipBias(uint32_t bias) { mip_bias_ = bias; }
+ 
+@@ -190,6 +252,8 @@ public:
+   }
+ 
+   ~DeviceTexture() {
++    if (local_share_)
++      LocalShareRemove(local_share_);
+     if (local_kmt_) {
+       D3DKMT_DESTROYALLOCATION destroy = {};
+       destroy.hDevice = this->m_parent->GetLocalD3DKMT();
+@@ -365,7 +429,10 @@ public:
+     }
+ 
+     if (!global_kmt_) {
+-      return E_INVALIDARG;
++      if (!local_share_)
++        return E_INVALIDARG;
++      *pSharedHandle = reinterpret_cast<HANDLE>(local_share_);
++      return S_OK;
+     }
+ 
+     *pSharedHandle = reinterpret_cast<HANDLE>(global_kmt_);
+@@ -640,10 +707,6 @@ HRESULT CreateDeviceTextureInternal(MTLD3D11Device *pDevice,
+   auto shared_flag =
+       D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
+   if (finalDesc.MiscFlags & shared_flag) {
+-    if (!(pDevice->GetLocalD3DKMT() & 0xc0000000)) {
+-      ERR("DeviceTexture: Invalid device handle");
+-      return E_FAIL;
+-    }
+     // use a dedicated path for now, because there are other works for private storage mode
+ 
+     Flags<TextureAllocationFlag> flags;
+@@ -662,12 +725,25 @@ HRESULT CreateDeviceTextureInternal(MTLD3D11Device *pDevice,
+        * a fatal in the caller. */
+       static bool said = false;
+       if (!said) { said = true; ERR("DeviceTexture: no mach port for a shared texture; continuing unshared"); }
++      obj_handle_t mtl = allocation->texture().handle;
+       initialize(std::move(allocation));
+       auto *tex = ref(new DeviceTexture<tag>(&finalDesc, std::move(texture), pDevice));
+       tex->SetMipBias(mip_bias);
++      if constexpr (tag::dimension == D3D11_RESOURCE_DIMENSION_TEXTURE2D) {
++        /* A legacy shared handle can still be shared inside this process. */
++        if (mtl && !mip_bias && !(finalDesc.MiscFlags & D3D11_RESOURCE_MISC_SHARED_NTHANDLE)) {
++          D3D11_TEXTURE2D_DESC d2;
++          memcpy(&d2, &finalDesc, sizeof(d2));
++          tex->SetLocalShare(LocalShareAdd(mtl, d2));
++        }
++      }
+       *ppTexture = reinterpret_cast<typename tag::COM_IMPL *>(tex);
+       return S_OK;
+     }
++    if (!(pDevice->GetLocalD3DKMT() & 0xc0000000)) {
++      ERR("DeviceTexture: Invalid device handle");
++      return E_FAIL;
++    }
+     SharedResourceData runtimeData;
+     MakeUniqueSharedName(runtimeData.mach_port_name);
+     if (!WMTBootstrapRegister(runtimeData.mach_port_name, mach_port)) {

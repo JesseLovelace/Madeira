@@ -1183,6 +1183,7 @@ struct mad_resource {
     unsigned nxview, xview_cap;
     UINT64 reserved_bytes;   /* d3d12-tiled-resources: created by CreateReservedResource (fully backed), its tiles x 64 KB */
     UINT64 metal_bytes;      /* madeira-bcd metal-gap: a standalone texture, as Metal sizes it (0 = not counted) */
+    obj_handle_t shared_base;   /* OpenSharedHandle: the D3D11 texture `texture` is a view of (owned) */
 };
 /* srv_res / uav_res membership, O(1) through the resource's slot (the linear
  * scan it replaces ran over ~15,000 textures on every view creation). */
@@ -13084,6 +13085,7 @@ static ULONG STDMETHODCALLTYPE res_Release(ID3D12Resource *This) {
         { unsigned k; for (k = 0; k < r->nview_old; k++) free(r->view_old[k]); free(r->tview); free(r->xview); }
         if (r->buffer) NSObject_release(r->buffer);
         if (r->texture && !r->borrowed) NSObject_release(r->texture);
+        if (r->shared_base) { mad_unresident(r->owner, r->shared_base); NSObject_release(r->shared_base); }
         if (r->resolve_tmp) NSObject_release(r->resolve_tmp);
         if (r->placed_heap) { mad_pl_del(r->placed_heap, r); ID3D12Heap_Release((ID3D12Heap *)r->placed_heap); }   /* ml1145 */
         if (r->own_mem) {   /* ml1154: the GPU may still read it; free after its serial (reclaimed with the ml1148 list) */
@@ -19255,6 +19257,91 @@ static HRESULT STDMETHODCALLTYPE rootsig_GetDevice(ID3D12RootSignature *This, RE
     (void)This; return mad_child_get_device(NULL, riid, out);
 }
 
+/* ---- OpenSharedHandle ------------------------------------------------------
+ * A texture the application's D3D11 device (DXMT) created with
+ * D3D11_RESOURCE_MISC_SHARED, opened here by its legacy shared handle. DXMT keeps
+ * such textures in a process-local table (iOS has no cross-process Metal
+ * sharing) and d3d11.dll's MadeiraSharedTextureLookup returns the Metal texture.
+ * The resource wraps a full view of it: the view supplies the resource id
+ * descriptors use, and both refer to the same storage, so D3D11 writes are
+ * visible here once the D3D11 work has completed (the application orders that,
+ * as it must on Windows). */
+struct mad_d3d11_tex2d_desc {   /* D3D11_TEXTURE2D_DESC */
+    UINT Width, Height, MipLevels, ArraySize;
+    DXGI_FORMAT Format;
+    DXGI_SAMPLE_DESC SampleDesc;
+    UINT Usage, BindFlags, CPUAccessFlags, MiscFlags;
+};
+typedef BOOL (WINAPI *mad_shared_lookup_fn)(HANDLE, obj_handle_t *, struct mad_d3d11_tex2d_desc *);
+
+static HRESULT STDMETHODCALLTYPE device_OpenSharedHandle(ID3D12Device *This, HANDLE handle, REFIID riid, void **out) {
+    struct mad_device *d = (struct mad_device *)This;
+    static mad_shared_lookup_fn lookup;
+    static unsigned said;
+    struct mad_d3d11_tex2d_desc d11;
+    D3D12_RESOURCE_DESC desc;
+    struct WMTTextureSwizzleChannels sw = { WMTTextureSwizzleRed, WMTTextureSwizzleGreen, WMTTextureSwizzleBlue, WMTTextureSwizzleAlpha };
+    struct mad_resource *r;
+    obj_handle_t base = 0, view;
+    UINT64 id = 0;
+    enum WMTPixelFormat pf;
+    HRESULT hr;
+
+    if (!out) return E_POINTER;
+    *out = NULL;
+    if (!lookup) {
+        HMODULE m = GetModuleHandleW(L"d3d11.dll");
+        if (m) lookup = (mad_shared_lookup_fn)(void *)GetProcAddress(m, "MadeiraSharedTextureLookup");
+    }
+    memset(&d11, 0, sizeof d11);
+    if (!lookup || !lookup(handle, &base, &d11) || !base) {
+        if (said++ < 8) d3d12_log("[madeira-d3d12] OpenSharedHandle %p: not a shared D3D11 texture (lookup %s)\n", handle, lookup ? "present" : "absent");
+        return E_INVALIDARG;
+    }
+    pf = MTLTexture_pixelFormat(base);
+    view = MTLTexture_newTextureView(base, pf, d11.ArraySize > 1 ? WMTTextureType2DArray : WMTTextureType2D,
+                                     0, (uint16_t)MTLTexture_mipmapLevelCount(base), 0,
+                                     (uint16_t)(d11.ArraySize ? d11.ArraySize : 1), sw, &id);
+    if (!view) { NSObject_release(base); return mad_creation_failure(d, "shared texture view"); }
+
+    memset(&desc, 0, sizeof desc);
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Width = d11.Width; desc.Height = d11.Height;
+    desc.DepthOrArraySize = (UINT16)(d11.ArraySize ? d11.ArraySize : 1);
+    desc.MipLevels = (UINT16)MTLTexture_mipmapLevelCount(base);
+    desc.Format = d11.Format;
+    desc.SampleDesc.Count = 1;
+    desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    if (d11.BindFlags & 0x20 /* D3D11_BIND_RENDER_TARGET */) desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    if (d11.BindFlags & 0x80 /* D3D11_BIND_UNORDERED_ACCESS */) desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
+
+    r = calloc(1, sizeof *r);
+    if (!r) { NSObject_release(view); NSObject_release(base); return E_OUTOFMEMORY; }
+    r->vtbl = &g_res_vtbl; r->refs = 1; r->iid = &IID_ID3D12Resource; r->name = "SharedTexture";
+    r->serial = (unsigned)InterlockedIncrement(&g_res_serial);
+    r->heap = D3D12_HEAP_TYPE_DEFAULT;
+    r->desc = desc;
+    r->owner = d;
+    r->texture = view;
+    r->shared_base = base;   /* the lookup's reference */
+    mad_resident(d, base);
+    r->gpu_resource_id = id;
+    r->width = d11.Width; r->height = d11.Height;
+    r->tex_type = d11.ArraySize > 1 ? WMTTextureType2DArray : WMTTextureType2D;
+    r->tex_pf = pf; r->tex_mips = desc.MipLevels; r->tex_layers = desc.DepthOrArraySize; r->tex_depth = 1;
+    r->samples = 1;
+    EnterCriticalSection(&d->view_lock);
+    mad_vmap_put_locked(d, r->gpu_resource_id, r->tex_layers, 0);
+    LeaveCriticalSection(&d->view_lock);
+    if (said++ < 8)
+        d3d12_log("[madeira-d3d12] OpenSharedHandle %p: %ux%u format %u (pixel format %u) mips %u\n", handle,
+                  d11.Width, d11.Height, (unsigned)d11.Format, (unsigned)pf, (unsigned)desc.MipLevels);
+    hr = res_QI((ID3D12Resource *)r, riid, out);
+    res_Release((ID3D12Resource *)r);
+    return hr;
+}
+
 /* ---- vtable construction ------------------------------------------------- */
 static void build_vtables(void) {
     static LONG done;
@@ -19297,6 +19384,7 @@ static void build_vtables(void) {
     g_device_vtbl.CreateQueryHeap = (void *)device_CreateQueryHeap;
     g_device_vtbl.CreateHeap = (void *)device_CreateHeap;
     g_device_vtbl.CreatePlacedResource = (void *)device_CreatePlacedResource;
+    g_device_vtbl.OpenSharedHandle = (void *)device_OpenSharedHandle;
     g_memheap_vtbl.QueryInterface          = memheap_QI;
     g_memheap_vtbl.AddRef                  = memheap_AddRef;
     g_memheap_vtbl.Release                 = memheap_Release;

@@ -202,6 +202,10 @@ jobs:
             build/dxmt-ios/shader-headers
       - uses: actions/cache@v4
         with:
+          key: dxmt-pe-${{ steps.pins.outputs.dxmt }}-${{ steps.pins.outputs.wine }}-${{ hashFiles('scripts/build/dxmt-*.patch', 'scripts/build/build-dxmt-pe.sh', 'scripts/build/setup-llvm-mingw.sh') }}
+          path: build/dxmt-pe/d3d11.dll
+      - uses: actions/cache@v4
+        with:
           key: rppairing-${{ hashFiles('build/rppairing-ios/Cargo.lock', 'build/rppairing-ios/src/**', 'build/rppairing-ios/build.sh') }}
           path: app/Madeira/libmadeira_rppairing.a
       - name: Build IPA
