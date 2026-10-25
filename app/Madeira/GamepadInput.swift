@@ -80,6 +80,25 @@ final class GamepadInput: @unchecked Sendable {
         return ("xinput", "default")
     }
 
+    /// `env.MADEIRA_PAD_FACE`: the buttons physical A, B, X and Y send, as four
+    /// letters (unset or "ABXY" unchanged; "BAYX" swaps A/B and X/Y). For a game
+    /// that reads the face buttons in another order than its prompts show. The
+    /// game's own lines come first. Read at session start.
+    static func faceMap() -> (masks: [UInt16], value: String) {
+        let identity: [UInt16] = [0x1000, 0x2000, 0x4000, 0x8000]
+        let value = (MadeiraConfig.gameValue("env.MADEIRA_PAD_FACE")
+            ?? MadeiraConfig.get("env.MADEIRA_PAD_FACE")
+            ?? ProcessInfo.processInfo.environment["MADEIRA_PAD_FACE"]
+            ?? "abxy").lowercased().filter { !$0.isWhitespace }
+        let letters: [Character: UInt16] = ["a": 0x1000, "b": 0x2000, "x": 0x4000, "y": 0x8000]
+        let masks = value.compactMap { letters[$0] }
+        guard masks.count == 4, value.count == 4 else {
+            if value != "abxy" { LogStore.shared.log("[xinput] env.MADEIRA_PAD_FACE=\(value) is not four of A/B/X/Y; ignored") }
+            return (identity, "abxy")
+        }
+        return (masks, value)
+    }
+
     /// ml2106: what of a game's controller output reaches the physical pad
     /// (app/Madeira/PadOutput.m): XInputSetState rumble on any XInput pad, and
     /// the virtual DualSense's output reports (rumble, adaptive triggers,
@@ -104,6 +123,9 @@ final class GamepadInput: @unchecked Sendable {
     /// the first Wine process read MADEIRA_HIDPAD to create the device and its
     /// registry entries. In XInput mode it only unsets that and logs.
     @MainActor func beginPadSession() {
+        let face = Self.faceMap()
+        queue.async { [self] in faceMasks = face.masks }
+        if face.value != "abxy" { LogStore.shared.log("[xinput] face buttons A,B,X,Y send \(face.value.uppercased())") }
         let mode = Self.configuredPadMode()
         let output = Self.configuredPadOutput()
         unsetenv("MADEIRA_HIDPAD"); unsetenv("MADEIRA_HIDPAD_NAME")
@@ -203,6 +225,8 @@ final class GamepadInput: @unchecked Sendable {
     private var hidActive = false
     /// MADEIRA_HIDPAD_XINPUT=1: player 1 stays an XInput pad as well.
     private var hidKeepsXInput = false
+    /// The XInput masks physical A, B, X and Y send this session (faceMap()).
+    private var faceMasks: [UInt16] = [0x1000, 0x2000, 0x4000, 0x8000]
     private var hidBattery: (level: UInt8, charging: UInt8) = (UInt8(WINIOS_HIDPAD_BATTERY_UNKNOWN), 0)
     private var hidBatteryCountdown = 0
     private var touchState = TouchGamepadState()
@@ -344,10 +368,16 @@ final class GamepadInput: @unchecked Sendable {
                     (pad.buttonMenu, 0x0010), (pad.buttonOptions, 0x0020),
                     (pad.leftThumbstickButton, 0x0040), (pad.rightThumbstickButton, 0x0080),
                     (pad.leftShoulder, 0x0100), (pad.rightShoulder, 0x0200),
-                    (pad.buttonHome, 0x0400), (pad.buttonA, 0x1000),
-                    (pad.buttonB, 0x2000), (pad.buttonX, 0x4000), (pad.buttonY, 0x8000)
+                    (pad.buttonHome, 0x0400)
                 ]
                 for (button, mask) in buttons where button?.isPressed == true { state.buttons |= mask }
+                // The library navigates by the physical buttons; the game gets faceMasks.
+                var physical = state.buttons
+                let face: [GCControllerButtonInput] = [pad.buttonA, pad.buttonB, pad.buttonX, pad.buttonY]
+                for (k, button) in face.enumerated() where button.isPressed {
+                    physical |= UInt16(0x1000) << UInt16(k)
+                    state.buttons |= faceMasks[k]
+                }
                 state.left_trigger = Self.trigger(pad.leftTrigger.value)
                 state.right_trigger = Self.trigger(pad.rightTrigger.value)
                 state.lx = Self.axis(pad.leftThumbstick.xAxis.value)
@@ -359,7 +389,7 @@ final class GamepadInput: @unchecked Sendable {
                 // sees a connected pad at rest.
                 if i == 0 {
                     let library = LibraryController.shared
-                    library.sample(buttons: state.buttons, lx: state.lx, ly: state.ly)
+                    library.sample(buttons: physical, lx: state.lx, ly: state.ly)
                     if library.ownsInput {
                         state = winios_gamepad()
                         state.connected = 1
@@ -370,7 +400,7 @@ final class GamepadInput: @unchecked Sendable {
                         // motion; XInput sees no physical player 1 (touch may still
                         // connect it below). The HID controller, when on, likewise
                         // stays but gets none of the physical pad's input.
-                        PadKeyboardMouse.shared.feed(buttons: state.buttons, lt: state.left_trigger, rt: state.right_trigger,
+                        PadKeyboardMouse.shared.feed(buttons: physical, lt: state.left_trigger, rt: state.right_trigger,
                                                      lx: state.lx, ly: state.ly, rx: state.rx, ry: state.ry,
                                                      bindings: kbm, focused: HardwareInput.shared.baseFocused)
                         hidLive = nil

@@ -1549,7 +1549,12 @@ static void mad_pd_purge(const void *obj) {
 static ULONG mad_release(struct mad_obj *o) {
     LONG r = InterlockedDecrement(&o->refs);
     if (r == 0) { mad_pd_purge(o);   /* ml1143 */
-        d3d12_log("[madeira-d3d12] destroyed %s\n", o->name);
+        /* A line costs up to ~0.7 ms (OutputDebugStringA), and an engine that
+         * makes command allocators per frame destroys dozens a frame. */
+        static LONG destroyed;
+        LONG n = InterlockedIncrement(&destroyed);
+        if (n <= 64 || !(n % 10000))
+            d3d12_log("[madeira-d3d12] destroyed %s (%ld objects destroyed so far)\n", o->name, (long)n);
         free(o);
     }
     return (ULONG)r;
