@@ -112,6 +112,7 @@ FLAGS = [
     "--disable-everything", "--disable-autodetect", "--disable-gpl", "--disable-nonfree", "--disable-version3",
     "--enable-decoder=mp1,mp2,mp3", "--enable-decoder=pcm_u8,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le,pcm_f64le",
     "--enable-demuxer=mp3,wav,mov", "--enable-parser=mpegaudio",
+    "--enable-decoder=vp9", "--enable-bsf=vp9_superframe_split",
     # TEST ONLY: input synthesis, and the stand-in for AudioToolbox inside the stub AAC backend
     "--enable-encoder=mp2,aac", "--enable-muxer=mp4", "--enable-decoder=aac",
     "--disable-programs", "--disable-doc", "--disable-network", "--disable-avdevice", "--disable-swscale",
@@ -1034,6 +1035,38 @@ static uint8_t *read_file( const char *path, size_t *size )
     return b;
 }
 
+/* A real VP9 MP4 (env MADEIRA_TEST_VP9): decoded by the port's own libavcodec backend
+ * whatever video backend is configured; every picture comes out in order, as NV12
+ * with real content (not a flat plane). */
+static int test_vp9( const uint8_t *mp4, size_t size, int expect_frames )
+{
+    struct mav_parser *p = mav_create( 0 ); struct source s; struct mav_stream_info vi; struct mav_buffer b;
+    int pictures = 0, r; uint64_t last = 0; size_t i;
+
+    src_start( &s, p, mp4, size );
+    CHECK( mav_connect( p, size ) == MAV_OK && mav_stream_count( p ) == 1, "connect vp9 mp4" );
+    CHECK( mav_stream_info( p, 0, &vi ) == MAV_OK && vi.kind == MAV_CODEC_VP9 && !strcmp( vi.backend, "libavcodec" ),
+           "vp9 info: kind %d backend %s", vi.kind, vi.backend );
+    CHECK( mav_enable_video( p, 0, &vi.vnative ) == MAV_OK && mav_seek( p, 0, 1, 0, 0, 0 ) == MAV_OK, "enable" );
+    while ((r = mav_get_buffer( p, 0, &b )) == MAV_OK)
+    {
+        uint8_t *pic = malloc( b.size ); unsigned lo = 255, hi = 0;
+        CHECK( mav_copy_buffer( p, 0, pic, 0, b.size ) == MAV_OK, "copy" );
+        for (i = 0; i < (size_t)vi.vnative.width * vi.vnative.height; i++) { if (pic[i] < lo) lo = pic[i]; if (pic[i] > hi) hi = pic[i]; }
+        CHECK( hi - lo > 64, "picture %d is flat (%u..%u)", pictures, lo, hi );
+        CHECK( !pictures || b.pts > last, "picture %d pts %llu after %llu", pictures, (unsigned long long)b.pts, (unsigned long long)last );
+        last = b.pts; free( pic ); pictures++;
+        mav_release_buffer( p, 0 );
+    }
+    CHECK( r == MAV_NO_BUFFER && pictures == expect_frames, "%d vp9 pictures, expected %d", pictures, expect_frames );
+    CHECK( mav_seek( p, 0, 1, 10000000, 0, 0 ) == MAV_OK && mav_get_buffer( p, 0, &b ) == MAV_OK && b.pts >= 10000000 - 1,
+           "seek 1 s: first pts %llu", (unsigned long long)b.pts );
+    mav_release_buffer( p, 0 );
+    src_stop( &s ); mav_destroy( p );
+    printf( "PASS: vp9 mp4 on the libavcodec backend: %d pictures in order with content; seek\n", pictures );
+    return 0;
+}
+
 int main( int argc, char **argv )
 {
     size_t mp2_size, wsize, mp4_size; uint8_t *mp2, *wav, *mp4;
@@ -1067,6 +1100,14 @@ int main( int argc, char **argv )
     if (test_mp4_formats( mp4, mp4_size )) return 1;
     if (test_mp4_late_audio( mp4, mp4_size, seconds )) return 1;
     if (test_mp4_refusals()) return 1;
+    if (getenv( "WGP_VP9" ))
+    {
+        size_t size; uint8_t *v = read_file( getenv( "WGP_VP9" ), &size );
+        if (!v) { printf( "FAIL: cannot read the vp9 clip\n" ); return 1; }
+        if (test_vp9( v, size, atoi( getenv( "WGP_VP9_FRAMES" ) ) )) return 1;
+        free( v );
+    }
+    else printf( "SKIP: no VP9 clip (set MADEIRA_TEST_VP9 and MADEIRA_TEST_VP9_FRAMES)\n" );
     if (argc > 1)
     {
         size_t size; uint8_t *mp3 = read_file( argv[1], &size ); double secs = argc > 2 ? atof( argv[2] ) : 0;
@@ -1101,6 +1142,9 @@ with tempfile.TemporaryDirectory() as t:
         args += [mp3]
     env = {k: v for k, v in os.environ.items() if not k.startswith("MADEIRA_")}
     env["ASAN_OPTIONS"] = "detect_leaks=1"
+    if os.environ.get("MADEIRA_TEST_VP9"):
+        env["WGP_VP9"] = os.environ["MADEIRA_TEST_VP9"]
+        env["WGP_VP9_FRAMES"] = os.environ.get("MADEIRA_TEST_VP9_FRAMES", "0")
     if mp3:
         # first pass: learn the stream's duration from the parser's own connect line
         probe = subprocess.run(args + ["0"], env=env, capture_output=True, text=True)

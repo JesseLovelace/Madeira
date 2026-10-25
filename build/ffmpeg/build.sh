@@ -11,7 +11,8 @@
 #   - libavcodec: the WMA-family decoders behind the Windows WMA decoder
 #     MFT/DMO (wmav1, wmav2, wmapro, wmalossless, xma1, xma2), which FAudio
 #     uses for xWMA/XMA voices; MPEG-1 layer I/II/III and plain PCM decoders
-#     for the wg_parser.
+#     for the wg_parser; the VP9 decoder (and its superframe-split filter) for
+#     MP4 movies in VP9, which VideoToolbox does not decode for apps.
 #   - libavformat: the wg_parser's demuxers -- mp3, wav and mov (MP4/MOV/M4A)
 #     -- and the mpegaudio parser the mp3 demuxer selects. No protocols: the
 #     parser reads through its own AVIOContext (the PE read thread's pull
@@ -112,6 +113,8 @@ CONFIG_ARGS=(
     --enable-decoder=wmav1,wmav2,wmapro,wmalossless,xma1,xma2
     --enable-decoder=mp1,mp2,mp3
     --enable-decoder=pcm_u8,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le,pcm_f64le
+    --enable-decoder=vp9
+    --enable-bsf=vp9_superframe_split
     --enable-demuxer=mp3,wav,mov
     --enable-parser=mpegaudio
     --disable-programs

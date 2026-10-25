@@ -33,7 +33,9 @@ shipped).
 | `build/ffmpeg/build.sh` | FFmpeg 7.1.1, pinned by SHA-256, LGPL-only configuration. |
 
 FFmpeg is built with no H.264, HEVC or AAC decoder or parser: those streams go
-to the platform decoders. See `THIRD-PARTY-NOTICES.md` for the exact component
+to the platform decoders. VP9, which VideoToolbox does not offer to apps, is
+decoded by FFmpeg's own software decoder (8-bit 4:2:0) in the same backend
+shape (`mav_ffmpeg_video_backend` in `wg_parser_av_ios.c`). See `THIRD-PARTY-NOTICES.md` for the exact component
 list and its licence.
 
 The PE half of winegstreamer is upstream's and unchanged. Wine's configure
