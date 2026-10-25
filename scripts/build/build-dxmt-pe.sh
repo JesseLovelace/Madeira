@@ -28,7 +28,7 @@ fi
 fail() {
   tail -60 "$LOG"
   if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
-    msg="$( (grep -B2 -A8 -m4 -E "error:|Error |No rule|undefined symbol|ERROR:" "$LOG" || tail -30 "$LOG") | head -40 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')"
+    msg="$( (grep -A8 -m4 -E "error:|Error [0-9]|No rule|undefined symbol|ERROR:" "$LOG" || tail -30 "$LOG") | head -40 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')"
     echo "::error title=DXMT d3d11.dll build failed ($1)::$msg"
   fi
   exit 1
@@ -39,7 +39,7 @@ export PATH="$MINGW:$PATH"
 
 echo "Building the Wine pieces DXMT links against..."
 make -C "$TREE" -j"$JOBS" tools/winebuild/winebuild \
-  dlls/winecrt0/arm64ec-windows/libwinecrt0.a \
+  libs/winecrt0/arm64ec-windows/libwinecrt0.a \
   dlls/ntdll/arm64ec-windows/libntdll.a \
   dlls/dbghelp/arm64ec-windows/libdbghelp.a >"$LOG" 2>&1 || fail "wine"
 
