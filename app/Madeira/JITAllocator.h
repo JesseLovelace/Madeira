@@ -116,8 +116,15 @@ void jit_set_log_callback(jit_log_callback_t callback);
 extern unsigned long madeira_early_window_base;   /* 0x140000000 if held, else 0 */
 extern unsigned long madeira_early_window_size;
 extern unsigned long madeira_early_pool_base;     /* placeholder directly above the window, else 0 */
-extern unsigned long madeira_early_intruder_base, madeira_early_intruder_size;   /* ml1135: first mapping above the window when no placeholder fit */
+extern unsigned long madeira_early_intruder_base, madeira_early_intruder_size;   /* ml1135: first mapping above the window (above the placeholder when one was taken) */
 extern unsigned madeira_early_intruder_tag, madeira_early_intruder_prot;
 extern unsigned long madeira_early_pool_size;
+
+/* The same two facts, as functions. A C global `var` is shared mutable state
+ * under Swift 6 strict concurrency and cannot be read at all from Swift; these
+ * can. Both are written once by the constructor before main and are constant
+ * thereafter, so no synchronisation is implied or needed. */
+void madeira_early_pool_placeholder(unsigned long *base, unsigned long *size);
+void madeira_early_pool_intruder(unsigned long *base, unsigned long *size, unsigned *tag);
 
 #endif // JIT_ALLOCATOR_H

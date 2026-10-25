@@ -20,9 +20,10 @@ import SwiftUI
 //   - the Steam client's folder, outside its steamapps library, holds Valve's
 //     client programs: a dialog of theirs may need the user;
 //   - any other program is the game (or its own launcher) once the Dock host has
-//     started. Before that, the game's one-time installs run from the batch, and a
-//     window first shown then is an installer's: never the game, and a dialog of
-//     theirs may need the user.
+//     started, and a small window of it with a title bar (its own message box) may
+//     need the user. Before that, the game's one-time installs run from the batch,
+//     and a window first shown then is an installer's: never the game, and a dialog
+//     of theirs may need the user.
 // Log tag: [steam-launch-view] (scene names, window sizes and owner classes only).
 
 // MARK: - Rules (Foundation only; tests/host/check-dock-start-screen.py compiles this part)
@@ -38,13 +39,17 @@ struct SteamLaunchWindow: Equatable {
     var drawn: Bool
     var pid: UInt32 = 0
     var hwnd: UInt64 = 0
+    /// The window has a title bar (WS_CAPTION): a message box or a dialog, never a
+    /// splash screen or a tool strip.
+    var caption: Bool = false
 }
 
 /// What a Dock start is showing.
 enum SteamLaunchScene: Equatable {
     /// Nothing for the user yet; the host and Valve's client work in the background.
     case waiting
-    /// A window that may need the user: a dialog of Valve's client or of a one-time installer.
+    /// A window that may need the user: a dialog of Valve's client or of a one-time
+    /// installer, or the game's own message box.
     case steamWindow
     /// A window of the started game is up.
     case game
@@ -116,6 +121,11 @@ enum SteamLaunchScene: Equatable {
             // A one-time installer that fails can show an error box and wait for OK, and
             // the start waits for it. MADEIRA_DOCK_INSTALLER_REVEAL=0 keeps them hidden.
             case .other where installer && steam == nil && window.drawn && dialogSized && installerReveal:
+                steam = window
+            // A game that fails early can show its own message box ("Failed to load il2cpp",
+            // 179x114) and wait for OK. It is smaller than a game window, often than a dialog
+            // too; its title bar tells it from a splash screen or a tool strip.
+            case .other where !installer && steam == nil && window.drawn && window.caption:
                 steam = window
             default: break
             }
@@ -199,9 +209,14 @@ enum DockStartStatus {
     /// installs first; `installerProgress`: their progress in words;
     /// `installsFinished`: they ended, and the host starts next. `waited`: seconds
     /// since the host could start (the start began, or the installs finished); it
-    /// only matters before the host's first field.
+    /// only matters before the host's first field. madeira-bcd: `restartHint`, for a session
+    /// that runs only the installs (DockInstallers.installsOnly): no host follows them; the
+    /// hint (the session closes, then Madeira asks for a restart) does.
     static func text(_ fields: [String: String], installers: Bool, installerProgress: String?,
-                     installsFinished: Bool, waited: Double) -> String {
+                     installsFinished: Bool, waited: Double, restartHint: String? = nil) -> String {
+        if fields["launch-option-missing"] != nil || fields["launch-option-invalid"] != nil {
+            return "Steam rejected this game's launch option."
+        }
         if fields["launch-update-wait"] != nil && fields["launch-update-ready"] == nil {
             return "Steam is installing content this game needs. The game starts when it finishes…"
         }
@@ -223,6 +238,14 @@ enum DockStartStatus {
         if ["ceg-scm", "ceg-request-busy", "ceg-request"].contains(where: { fields[$0] != nil }) && fields["ceg-result"] == nil {
             return "Steam is preparing this game's executable…"
         }
+        // Offline start: Valve's client signs in from what it saved while online.
+        if fields["session-offline-listed"] == "1" { return "Offline: Steam found this game's license in what it saved. Starting the game…" }
+        if fields["session-offline-logon-result"] == "1" || fields["session-offline-logon-retry"] == "1" {
+            return "Offline: Steam signed in from its saved sign-in. Checking this game's license…"
+        }
+        if fields["session-offline-requested"] != nil || fields["session-offline-fallback"] != nil {
+            return "No connection. Asking Steam to sign in offline…"
+        }
         if fields["session-requested-app-listed"] == "1" { return "License confirmed. Steam is starting the game…" }
         if fields["session-authenticated-online"] == "1" { return "Signed in. Waiting for Steam to confirm this game's license…" }
         if fields["session-native-token-submitted"] != nil || fields["session-logon-start-result"] != nil {
@@ -233,6 +256,7 @@ enum DockStartStatus {
         let starting = waited >= slowAfter ? "Still starting Madeira Dock…" : "Starting Madeira Dock…"
         guard installers else { return starting }
         guard installsFinished else { return installerProgress ?? "Running this game's one-time installs…" }
+        if let restartHint { return (installerProgress ?? "One-time installs finished.") + "\n" + restartHint }
         return (installerProgress ?? "One-time installs finished.") + "\n" + starting
     }
 
@@ -287,6 +311,7 @@ final class DockStartScreen: ObservableObject {
     /// A library session begins; `game` is set for a Dock start.
     func begin(_ game: DockGame?, at start: Date) {
         endHold(reason: nil)
+        winios_window_census_enable(0)
         active = game != nil; appID = game?.id; failure = nil
         askEndOtherSession = false; askedEndOtherSession = false
         exitObserved = false; hostStarted = false; early = []; started = start
@@ -300,6 +325,7 @@ final class DockStartScreen: ObservableObject {
     /// The session ended.
     func finish() {
         endHold(reason: "session-ended")
+        winios_window_census_enable(0)
         active = false; appID = nil; failure = nil
         askEndOtherSession = false
     }
@@ -404,7 +430,9 @@ final class DockStartScreen: ObservableObject {
         }
         hold = nil
         holding = false; attention = false
-        winios_window_census_enable(0)
+        // 2: the game's window is found, but its main window may still be shown for the first time
+        // minimized; Winios.m goes on restoring such windows until finish() ends the session.
+        winios_window_census_enable(reason == "game-window" ? 2 : 0)
     }
 
     /// Winios.m's census as SteamLaunchScene reads it.
@@ -414,7 +442,8 @@ final class DockStartScreen: ObservableObject {
         return raw.prefix(max(0, min(count, raw.count))).map { window in
             let image = withUnsafeBytes(of: window.image) { bytes in String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self) }
             return SteamLaunchWindow(image: image, width: Int(window.w), height: Int(window.h), visible: window.visible != 0,
-                                     drawn: window.presents > 0 || window.metal != 0, pid: window.pid, hwnd: window.hwnd)
+                                     drawn: window.presents > 0 || window.metal != 0, pid: window.pid, hwnd: window.hwnd,
+                                     caption: window.caption != 0)
         }
     }
 }

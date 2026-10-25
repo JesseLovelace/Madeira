@@ -34,10 +34,36 @@ enum MadeiraConfig {
     static var present: Bool { url.map { FileManager.default.fileExists(atPath: $0.path) } ?? false }
 
     /// All key/value pairs of madeira.cfg (empty when the file is absent).
+    ///
+    /// Cached: the library reads switches while it builds a page, which is the main thread in the middle
+    /// of a scroll, and reading and parsing the file each time cost frames. Each call stats the file (a change by
+    /// anyone is seen at once) and parses it again only when its modification time or size moved.
     static func all() -> [String: String] {
-        guard let u = url, let text = try? String(contentsOf: u, encoding: .utf8) else { return [:] }
-        return parse(text)
+        guard let u = url else { return [:] }
+        var info = stat()
+        #if os(Linux)   // the host checks compile this file on Linux, where stat has st_mtim
+        let stamp: String = stat(u.path, &info) == 0 ? "\(info.st_mtim.tv_sec).\(info.st_mtim.tv_nsec).\(info.st_size)" : ""
+        #else
+        let stamp: String = stat(u.path, &info) == 0 ? "\(info.st_mtimespec.tv_sec).\(info.st_mtimespec.tv_nsec).\(info.st_size)" : ""
+        #endif
+        cache.lock.lock()
+        defer { cache.lock.unlock() }
+        if let hit = cache.value, cache.stamp == stamp { return hit }
+        let parsed = stamp.isEmpty ? [:] : ((try? String(contentsOf: u, encoding: .utf8)).map(parse) ?? [:])
+        cache.value = parsed; cache.stamp = stamp; cache.exists = !stamp.isEmpty
+        return parsed
     }
+
+    private final class Cache: @unchecked Sendable {
+        let lock = NSLock()
+        var value: [String: String]?
+        var stamp = ""
+        var exists = false
+    }
+    private static let cache = Cache()
+    /// `present`, from the same cache as `all()`: no file system call per read.
+    private static var presentCached: Bool { _ = all(); cache.lock.lock(); defer { cache.lock.unlock() }; return cache.exists }
+    private static func invalidate() { cache.lock.lock(); cache.value = nil; cache.lock.unlock() }
 
     /// The key/value pairs of text in madeira.cfg's syntax, the last line winning.
     static func parse(_ text: String) -> [String: String] {
@@ -56,7 +82,7 @@ enum MadeiraConfig {
     /// The value for `key`, trimmed, or nil when unset. Falls back to the legacy
     /// file ONLY when madeira.cfg does not exist.
     static func get(_ key: String) -> String? {
-        if present { return all()[key] }
+        if presentCached { return all()[key] }
         guard let d = documents,
               let txt = try? String(contentsOf: d.appendingPathComponent("madeira-\(key).txt"), encoding: .utf8)
         else { return nil }
@@ -74,6 +100,9 @@ enum MadeiraConfig {
 
     /// `key` from the running game's own lines, or nil (also when empty). The
     /// native reader lets it win on its own; Swift readers that merge (dxmt) ask.
+    /// madeira-bcd: whichever file MADEIRA_CFG_GAME names -- a game's own
+    /// GameProfiles.swift file, or the merged madeira-game.cfg (applyGame) --
+    /// with the same parser GameProfile uses.
     static func gameValue(_ key: String) -> String? {
         guard let p = getenv("MADEIRA_CFG_GAME"), case let path = String(cString: p), !path.isEmpty,
               let text = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
@@ -85,11 +114,40 @@ enum MadeiraConfig {
     /// and the file removed, so a previous game's lines never apply. Returns the
     /// pairs it applied; throws (with the variable unset) when the file cannot
     /// be written.
+    ///
+    /// madeira-bcd: a game's own GameProfiles.swift file (Application
+    /// Support/GameConfigs/<hash>.cfg) is exported as MADEIRA_CFG_GAME by
+    /// BCDLaunch.applyExtras on the main thread before this runs on the launch
+    /// worker. That file stays the game's file: with no lines of the entry's own
+    /// it is left exported exactly as it was (the owner's per-game profiles run
+    /// unchanged); with some, both are written to madeira-game.cfg, the entry's
+    /// lines first and the game's file after them, so a key the game's file sets
+    /// wins. A launch without a game file (applyExtras unset the variable) is
+    /// upstream's behaviour unchanged.
     @discardableResult
     static func applyGame(_ text: String?) throws -> [String: String] {
+        let profileURL = bcdProfileURL()
         unsetenv("MADEIRA_CFG_GAME")
         let pairs = parse(text ?? "")
         guard let u = gameURL else { return [:] }
+        if let profileURL {
+            let profileText = (try? String(contentsOf: profileURL, encoding: .utf8)) ?? ""
+            let profilePairs = parse(profileText)
+            if pairs.isEmpty || text == nil {
+                try? FileManager.default.removeItem(at: u)
+                if !profilePairs.isEmpty { setenv("MADEIRA_CFG_GAME", profileURL.path, 1) }
+                return profilePairs
+            }
+            if let text {
+                let merged = (text.hasSuffix("\n") ? text : text + "\n")
+                    + "# madeira-bcd: the game's own file (\(profileURL.lastPathComponent)), after the lines above so it wins\n"
+                    + profileText
+                try FileManager.default.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try (merged.hasSuffix("\n") ? merged : merged + "\n").write(to: u, atomically: true, encoding: .utf8)
+                setenv("MADEIRA_CFG_GAME", u.path, 1)
+                return pairs.merging(profilePairs) { $1 }
+            }
+        }
         guard !pairs.isEmpty, let text else {
             try? FileManager.default.removeItem(at: u)
             return [:]
@@ -98,6 +156,22 @@ enum MadeiraConfig {
         try (text.hasSuffix("\n") ? text : text + "\n").write(to: u, atomically: true, encoding: .utf8)
         setenv("MADEIRA_CFG_GAME", u.path, 1)
         return pairs
+    }
+
+    /// madeira-bcd: the GameProfiles.swift file MADEIRA_CFG_GAME names right now
+    /// (a file directly inside Application Support/GameConfigs), else nil --
+    /// also for upstream's own madeira-game.cfg.
+    private static func bcdProfileURL() -> URL? {
+        // GameProfile.directory's folder, named here so this file compiles on its own
+        // (the onboarding, runtime-settings and early-config host checks build it alone).
+        guard let p = getenv("MADEIRA_CFG_GAME"), case let path = String(cString: p), !path.isEmpty,
+              let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        else { return nil }
+        let dir = base.appendingPathComponent("GameConfigs", isDirectory: true)
+        let url = URL(fileURLWithPath: path)
+        guard url.deletingLastPathComponent().standardizedFileURL.path == dir.standardizedFileURL.path,
+              FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
     }
 
     static func bool(_ key: String, default dflt: Bool = false) -> Bool {
@@ -124,6 +198,7 @@ enum MadeiraConfig {
         }
         if let value { lines.append("\(key) = \(value)") }
         let out = lines.joined(separator: "\n") + (lines.isEmpty ? "" : "\n")
+        defer { invalidate() }
         do { try out.write(to: u, atomically: true, encoding: .utf8); return true } catch { return false }
     }
 
@@ -131,7 +206,7 @@ enum MadeiraConfig {
     /// madeira.cfg, else the process environment, else `fallback`. Any value
     /// other than "0" means on.
     static func flag(_ name: String, fallback: Bool = true) -> Bool {
-        if present, let v = all()["env." + name] { return v != "0" }
+        if presentCached, let v = all()["env." + name] { return v != "0" }
         return getenv(name).map { String(cString: $0) != "0" } ?? fallback
     }
 
@@ -168,6 +243,7 @@ enum MadeiraConfig {
             migrated.append("env")
         }
         guard !migrated.isEmpty else { return [] }
+        defer { invalidate() }
         do {
             try (lines.joined(separator: "\n") + "\n").write(to: u, atomically: true, encoding: .utf8)
             log("madeira.cfg written from legacy files (\(migrated.joined(separator: ", "))); the madeira-*.txt files are now ignored and can be deleted")

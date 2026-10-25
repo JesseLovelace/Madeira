@@ -53,6 +53,15 @@ void madeira_display_set_layer(CAMetalLayer *layer) {
     pthread_mutex_unlock(&g_lock);
 }
 
+// Winios.m (MADEIRA_METAL_HUD_MAIN): a desktop session presents into
+// per-window layers, so this layer's Metal HUD is turned off there.
+CAMetalLayer *madeira_display_layer(void) {
+    pthread_mutex_lock(&g_lock);
+    CAMetalLayer *layer = g_layer;
+    pthread_mutex_unlock(&g_lock);
+    return layer;
+}
+
 // --- The guest's virtual monitor ---------------------------------------
 //
 // The front end lays out the presented layer and maps touches in guest
@@ -117,6 +126,13 @@ int madeira_dxmt_has_display_pacing(void) {
     return !g_dxmt_display_pacing_missing;
 }
 
+// DXMT with the 40 FPS cap (vsync mode 4) defines madeira_dxmt_has_40_cap()
+// returning 1. A DXMT without it would present mode 4 uncapped, so this weak
+// fallback says no and the front end does not offer 40.
+__attribute__((weak)) int madeira_dxmt_has_40_cap(void) {
+    return 0;
+}
+
 // --- macdrv_* implementations ---
 
 // DXMT only dereferences client_cocoa_view (passing it straight back to
@@ -156,6 +172,9 @@ extern CAMetalLayer *winios_metal_layer_for_hwnd(void *hwnd);
 // Game sessions: the window a swapchain presents from is the game's own;
 // Winios.m's game-mode window overlay must not draw its GDI bits.
 extern void winios_note_game_metal_hwnd(void *hwnd);
+// Both kinds of session: the driver logs what happens to a swapchain's window
+// ([swap-win] lines, Winios.m / driver_ios.c).
+extern void winios_note_swapchain_hwnd(void *hwnd);
 
 static macdrv_metal_device my_create_metal_device(void) {
     // DXMT also has a separate code path that creates its own MTLDevice;
@@ -174,6 +193,7 @@ static void my_release_metal_device(macdrv_metal_device d) {
 // compositor. Game mode: the fullscreen singleton, exactly as before.
 static macdrv_metal_view my_view_create_metal_view(macdrv_view v, macdrv_metal_device d) {
     (void)d;
+    winios_note_swapchain_hwnd((void *)v);
     if (madeira_desktop_mode()) {
         CAMetalLayer *layer = winios_metal_layer_for_hwnd((void *)v);
         if (!layer) {

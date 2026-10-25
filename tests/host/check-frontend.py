@@ -11,20 +11,24 @@ exit report.
    30 FPS fallback without DXMT's 30 FPS cap, profile validation, decoding of
    library files that carry unknown or fork-written keys (display mode,
    control opacity and size), the layout and touch-mapping math of every
-   Aspect & scaling mode, the pad-to-command mapping, and (ml1163) a game in
+   Aspect & scaling mode, the pad-to-command mapping, (ml1163) a game in
    the Wine desktop or direct, .bat/.cmd targets through cmd, the working
    folder (MADEIRA_WORKDIR, exported when it differs from the folder of what
    starts; the same variable as a Steam game's "The game"), the services batch,
    the command line the details page shows, and which of them a Steam game
-   takes.
+   takes, and (ml1172) the Resolution choices and default built from an iPad's
+   and a phone's screen and the one-time reset of 1408x648 entries.
 2. C: compiles the session exit hook from app/Madeira/WineProcessBridge.m and
    checks that only an NTSTATUS error of the launched program is recorded and
    that a reset clears it.
 3. Source checks: ntdll reports only the launched (initial) process's exit
    status, with no image names; the display-rate hold is opt-in and the 30 FPS
    cap is detected; the app wires the library into ContentView and
-   GamepadInput; game details offer Resolution (with Screen shape) for every
-   entry, Aspect & scaling and control opacity/size; the in-game menu offers
+   GamepadInput; game details offer Resolution (ml1172: this device's
+   choices, grouped, plus a saved size none of them has, and the screen shape
+   for MetalFX 1.5× while a game uses it) for every entry, Aspect & scaling
+   and control opacity/size, and the Desktop's page every setting a game's
+   has (only program-specific sections left out); the in-game menu offers
    Aspect & scaling, opacity, size and the Touch pointer mode; a session
    saves those choices to the game; the starting screen's controls are one row
    of glyph-only buttons with VoiceOver labels; and Settings ends with Credits
@@ -98,10 +102,15 @@ var published: (Int32, Int32) = (0, 0)
 func winios_display_mode_changed(_ w: Int32, _ h: Int32) { published = (w, h) }
 var vsync: Int32 = -1
 func madeira_set_vsync_locked(_ mode: Int32) { vsync = mode }
-enum ProMotionIntent { static var has30Cap = true }
+enum ProMotionIntent {
+    static var has30Cap = true
+    static var has40Cap = true
+''' + block(fps, '    static func supportedMode(_ mode: Int) -> Int32 {') + r'''
+}
 struct TouchControl: Codable, Equatable { var nx = 0.5 }
 enum ControlAction: Codable, Equatable, Hashable { case none }   // LibraryEntry.controllerBinds
 enum GamepadInput { static let keyboardMouseAvailable = true }   // LibraryEntry's per-game DirectInput choice
+struct GestureZone: Codable, Identifiable, Equatable { var id = UUID() }   // LibraryEntry.zones (GestureZones.swift)
 enum LibraryError: LocalizedError { case message(String) }
 func env(_ name: String) -> String? { getenv(name).map { String(cString: $0) } }
 '''
@@ -130,8 +139,8 @@ expect(env("MADEIRA_EXE") == "C:\\Games\\Some Game\\bin\\game.exe", "direct exec
 expect(env("MADEIRA_ARGS") == "-windowed \"-name=a b\"", "direct arguments verbatim")
 expect(env("MADEIRA_DESKTOP") == nil, "desktop state cleared")
 // Every entry's Resolution becomes the session's virtual monitor.
-expect(game.resolution == "1408x648", "new entries default to 1408x648")
-expect(env("MADEIRA_SCREEN_W") == "1408" && env("MADEIRA_SCREEN_H") == "648" && env("MADEIRA_SCREEN_SRC") == "knob",
+expect(game.resolution == "1152x800", "ml1172: new entries default to the screen's shape at 720p's pixels (1152x800 on an 11-inch iPad)")
+expect(env("MADEIRA_SCREEN_W") == "1152" && env("MADEIRA_SCREEN_H") == "800" && env("MADEIRA_SCREEN_SRC") == "knob",
        "a direct game's resolution is exported as the session default")
 game.resolution = "1560x720"; game.configureLaunch()
 expect(env("MADEIRA_SCREEN_W") == "1560" && env("MADEIRA_SCREEN_H") == "720" && published == (1560, 720),
@@ -200,12 +209,22 @@ game.config = "fence-chain = 6"; game.applyEnvironment()
 expect(MadeiraConfig.game == "fence-chain = 6", "the game's own config is applied at launch")
 game.config = nil; game.applyEnvironment()
 expect(MadeiraConfig.game == nil, "a game without its own config clears the previous one")
+game.metalFXUpscale = 1.5; game.config = "metalfx-upscale = 2"; game.applyEnvironment()
+expect(MadeiraConfig.game == "metalfx-upscale = 1.5\nmetalfx-upscale = 2", "MetalFX upscaling comes first, so the game's own line wins")
+game.metalFXUpscale = nil; game.config = nil
 // FPS limit: 30 needs DXMT's 30 FPS cap; without it a saved 30 runs as 60.
 game.fpsMode = 3; game.applyEnvironment()
 expect(vsync == 3, "30 FPS applied when DXMT has the cap")
 ProMotionIntent.has30Cap = false; game.applyEnvironment()
 expect(vsync == 1, "a saved 30 FPS runs as 60 without DXMT's 30 FPS cap")
-ProMotionIntent.has30Cap = true; game.fpsMode = 1; game.applyEnvironment()
+ProMotionIntent.has30Cap = true
+// 40 needs DXMT's 40 FPS cap and a 120 Hz panel; without them a saved 40 runs as 60.
+game.fpsMode = 4; game.applyEnvironment()
+expect(vsync == 4, "40 FPS applied when it is offered")
+expect((try? game.validate()) != nil, "a 40 FPS profile validates")
+ProMotionIntent.has40Cap = false; game.applyEnvironment()
+expect(vsync == 1, "a saved 40 FPS runs as 60 without the 40 FPS cap")
+ProMotionIntent.has40Cap = true; game.fpsMode = 1; game.applyEnvironment()
 expect(vsync == 1, "60 FPS applied")
 // "XInput and DirectInput": MADEIRA_DINPUT_PAD for that game's launch only; the
 // next launch without the choice clears it unless madeira.cfg sets it.
@@ -363,6 +382,42 @@ expect(phone.w == 1280 && phone.h == 720, "phone default mode is 1280x720")
 expect(tablet.w == 1152 && tablet.h == 864, "4:3 default mode is 1152x864 (cheapest 4:3 of at least 0.9 MP)")
 expect(DisplayMode.allCases.map { $0.label } == ["Fit", "Fill", "Stretch", "Aspect"], "the four Aspect & scaling choices")
 
+// ml1172: Resolution choices from the device's screen (points: shape; pixels: native).
+typealias RC = ResolutionChoices
+func screenOf(_ pw: CGFloat, _ ph: CGFloat, _ nw: CGFloat, _ nh: CGFloat) -> RC.Screen {
+    RC.Screen(points: CGSize(width: pw, height: ph), pixels: CGSize(width: nw, height: nh))
+}
+func sizes(_ g: RC.Group) -> [String] { g.choices.map(\.value) }
+let ipad = screenOf(1180, 820, 2360, 1640)          // 11-inch iPad
+let ipad13 = screenOf(1376, 1032, 2752, 2064)       // 13-inch iPad, 4:3
+let phone16 = screenOf(956, 440, 2868, 1320)        // iPhone 16 Pro Max, 19.5:9
+let ig = RC.groups(for: ipad)
+expect(RC.defaultSize(for: ipad) == (1152, 800), "iPad 11: default 1152x800 (720p's pixels)")
+expect(sizes(ig[0]) == ["944x656", "1152x800", "1728x1200", "2360x1640"], "iPad 11: screen-shaped choices, then native")
+expect(ig[0].choices.map(\.label) == ["944×656 · light", "1152×800 · default", "1728×1200 · ≈1080p", "2360×1640 · native"],
+       "iPad 11: labels name each level")
+expect(ig.map(\.title) == ["This screen's shape", "16:9 widescreen · bars above and below", "4:3 classic · bars at the sides"],
+       "iPad 11: group titles say how the PC shapes fit")
+expect(sizes(ig[1]) == ["960x540", "1280x720", "1600x900", "1920x1080", "2560x1440"] && sizes(ig[2]) == ["640x480", "800x600", "1024x768", "1280x960"],
+       "iPad 11: the 16:9 and 4:3 sizes")
+expect(!RC.fills(1408, 648, screen: ipad) && RC.fills(1408, 648, screen: phone16), "1408x648 is a phone's shape, not an iPad's")
+expect(RC.defaultSize(for: phone16) == (1408, 648) && sizes(RC.groups(for: phone16)[0]) == ["1168x536", "1408x648", "1568x720", "2120x976", "2868x1320"],
+       "iPhone 16 Pro Max: its own shape; the default stays 1408x648, its ≈720p; 720 lines for games that need them")
+expect(RC.groups(for: phone16)[0].choices[2].label == "1568×720 · 720 lines" && RC.screen720(for: phone16)! == (1568, 720)
+       && RC.screen720(for: ipad) == nil && RC.screen720(for: screenOf(667, 375, 1334, 750)) == nil,
+       "720 lines only where the default has fewer (a phone), in the screen's shape")
+let g13 = RC.groups(for: ipad13)
+expect(g13[2].title == "4:3 classic · fills this screen" && RC.defaultSize(for: ipad13).h > 0, "iPad 13: 4:3 fills the screen")
+let seG = RC.groups(for: screenOf(667, 375, 1334, 750))
+expect(sizes(seG[0]).contains("1280x720") && !sizes(seG[1]).contains("1280x720") && seG[1].title.hasSuffix("fills this screen"),
+       "iPhone SE: 1280x720 listed once, in its own shape")
+expect(sizes(seG[0]).last == "1334x750" && !sizes(seG[0]).contains("1920x1080"), "iPhone SE: nothing past native")
+expect(RC.extra("1408x648", in: ig, note: "saved")?.label == "1408×648 · saved" && RC.extra("944x656", in: ig, note: "saved") == nil
+       && RC.extra("junk", in: ig, note: "saved") == nil, "a saved size none of the choices has is listed once")
+expect(RC.metalFX(for: ipad, in: ig)?.label == "688×480 · for MetalFX 1.5×" && RC.metalFX(for: ipad13, in: g13) == nil
+       && RC.metalFX(for: phone16, in: RC.groups(for: phone16))?.value == "1040x480",
+       "MetalFX 1.5×: the screen's shape at 480 lines, not repeated where 4:3 already has 640x480")
+
 // Controller navigation.
 let c = LibraryController.shared
 var got: [String] = []
@@ -447,7 +502,7 @@ wrapper = block(server, 'void process_exit_wrapper( int status )')
 initial = wrapper[wrapper.index('    else\n    {'):]
 check('wine_launched_process_did_exit( status );' in initial and wrapper.count('wine_launched_process_did_exit( status );') == 1,
       'ntdll reports only the initial (app-launched) process exit, from the no-slot branch')
-check('__attribute__((weak))' in initial and 'ImagePathName' not in server and 'wine_process_did_' not in server,
+check('__attribute__((weak))' in initial and 'ImagePathName' not in wrapper and 'wine_process_did_' not in server,
       'the hook is weak and gets no image name')
 check('madeira_exit_is_helper' not in bridge and '.exe"' not in bridge[bridge.index('static uint64_t g_launch_exit'):bridge.index('static char *g_prefix_path')],
       'no program-name list in the exit report')
@@ -456,6 +511,9 @@ check('MadeiraConfig.flag("MADEIRA_PROMOTE", fallback: false)' in fps,
 check('if mode == 1 { return holdMaximum ? panelMaxFPS : 0 }' in fps, 'no display link in the 60 cap by default')
 check('__attribute__((weak)) void madeira_set_display_max_fps' in shim and 'ProMotionIntent.has30Cap' in fps
       and 'ProMotionIntent.has30Cap || mode == 3' in lib, 'the 30 FPS cap is offered only with DXMT support')
+check('__attribute__((weak)) int madeira_dxmt_has_40_cap(void) {\n    return 0;' in shim
+      and 'madeira_dxmt_has_40_cap() != 0 && panelMaxFPS >= 120' in fps
+      and 'ProMotionIntent.has40Cap || mode == 4' in lib, 'the 40 FPS cap is offered only with DXMT support and a 120 Hz panel')
 check('LibraryView(play: launchLibraryEntry' in content, 'ContentView shows the library when it is the chosen interface')
 check('runWineFullSequence(profile: entry)' in content and 'profile.applyEnvironment()' in content,
       'library launches use the shared launch path with the profile applied')
@@ -484,9 +542,40 @@ hud = block(lib, 'struct LibraryHUD: View')
 model = block(lib, 'final class LibraryModel: ObservableObject')
 check('Picker("Resolution", selection: $entry.resolution)' in detail and 'Desktop size' not in lib,
       'game details: one Resolution picker for every entry (not only the Desktop)')
-check('screenShapeResolution' in detail and 'Text("Screen shape (' in detail and 'MADEIRA_SCREEN_SHAPE_RESOLUTION' in detail,
-      'game details: Screen shape resolution choice')
+check('ResolutionChoices.groups()' in detail and 'Section(group.title)' in detail and 'ResolutionChoices.extra(entry.resolution' in detail
+      and 'presetResolutions' not in lib and 'MADEIRA_SCREEN_SHAPE_RESOLUTION' not in lib,
+      'ml1172: game details list this device\'s Resolution choices, grouped')
+check('ResolutionChoices.metalFX(in: groups)' in detail and 'entry.metalFXUpscale == 1.5 || entry.resolution == shape.value' in detail
+      and 'entry.resolution != metalFX?.value' in detail,
+      'game details: the MetalFX 1.5× screen shape while MetalFX 1.5× is chosen (or saved), not also as "saved"')
+reset = block(model, 'private func resetPhoneResolution(')
+check('resetPhoneResolution()' in block(model, 'private init()') and 'ResolutionChoices.fills(1408, 648)' in reset
+      and 'madeira.ml1172.resolution-reset' in reset and 'guard persist(next, wait: true) else { return }' in reset,
+      'ml1172: 1408x648 entries are reset once on a screen of another shape')
+check('ResolutionChoices.groups()' in block(content, 'private var resolutionPicker') and 'DesktopResolution' not in content,
+      'ml1172: the developer Resolution menu shows the same choices')
 check('Picker("Aspect & scaling"' in detail and 'entry.display = $0' in detail, 'game details: Aspect & scaling')
+# The Desktop's details page carries every setting a game's page does. What the Desktop
+# entry leaves out names or starts one particular program: its title and cover, how it
+# starts, its launch arguments, a Home Screen link, its executable. A block gated off
+# for the Desktop must be one of those and hold no other control.
+form_body = detail[:detail.index('.navigationTitle("Game details")')]
+desktop_out = ('Section("Library details")', 'Picker("Start"', 'TextField("Launch arguments"',
+               'Text("Home Screen")', 'Section("Executable")')
+desktop_controls = {'Picker("Start"', 'Toggle("Start Windows services first"'}
+hidden = []
+for gate in re.finditer(r'\bif\b[^{\n]*(?:entry\.desktop != true|entry\.usesLaunchOptions)[^{\n]*\{', form_body):
+    depth, end = 1, gate.end()
+    while depth:
+        depth += (form_body[end] == '{') - (form_body[end] == '}')
+        end += 1
+    gated = form_body[gate.end():end]
+    controls = set(re.findall(r'\b(?:Toggle|Picker|Slider|FPSChoice|ControllerModeChoice)\("?[^",)]*"?', gated))
+    controls = {c if c.endswith('"') or '"' not in c else c.rstrip('"') for c in controls}
+    if not any(marker in gated for marker in desktop_out) or {c for c in controls if not any(c.startswith(a) for a in desktop_controls)}:
+        hidden.append(gated.strip().splitlines()[0][:80])
+check(not hidden and 'Picker("MetalFX upscaling"' in form_body,
+      'Desktop details: every setting a game has, only program-specific sections left out (gated: %s)' % hidden)
 check('LabeledContent("Control opacity")' in detail and 'LabeledContent("Control size")' in detail,
       'game details: control opacity and size sliders')
 check('Picker("Aspect & scaling", selection: $model.displayMode)' in hud and 'MADEIRA_SESSION_TOOLS' in hud,
@@ -518,11 +607,13 @@ check('TouchControlsModel.diameter(control)' in content and 'library.opacity' in
       "touch controls follow the session's size and opacity")
 
 # Owner requests: the starting screen's glyph row, Settings credits last, no drive_c note.
-launch = block(hud, 'private func launchView(')
+launch = block(hud, 'private func launchColumnView(')
+wide = block(hud, 'private func launchWideView(')
 glyph = block(hud, 'private func launchGlyph(')
 row = block(launch, 'HStack(spacing: 14)')
 check('launchGlyph(showLogs ? "Hide live log" : "Show live log", "text.alignleft", on: showLogs)' in row
-      and 'Button(showLogs ?' not in launch,
+      and 'launchGlyph(showLogs ? "Hide live log" : "Show live log", "text.alignleft", on: showLogs)' in wide
+      and 'Button(showLogs ?' not in launch and 'Button(showLogs ?' not in wide,
       'starting screen: the live-log control is a glyph in one row')
 check('Image(systemName: symbol)' in glyph and '.accessibilityLabel(label)' in glyph and 'Text(' not in glyph
       and 'Circle()' in glyph, 'starting screen: glyph buttons show no text and keep their words as VoiceOver labels')
@@ -535,7 +626,9 @@ for who in ('name: "Will Faust", handle: "willfaust"', 'name: "Nick", handle: "1
             'name: "Jfishin", handle: "Jfishin"', 'name: "Jesse", handle: "JesseLovelace"',
             'name: "Dan Perks", handle: "danperks"',
             'name: "bahacan16", handle: "bahacan16"',
-            'name: "spitefulowl", handle: "spitefulowl"'):
+            'name: "spitefulowl", handle: "spitefulowl"',
+            'name: "meshoklv", handle: "meshoklv"',
+            'name: "TheHadesc", handle: "TheHadesc"'):
     check('MadeiraCredit(' + who in last, 'Settings credits: ' + who)
 check('https://github.com/\\(handle)' in block(lib, 'struct MadeiraCredit: View'),
       'a credit links the GitHub account')

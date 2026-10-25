@@ -1,5 +1,5 @@
 diff --git a/src/launch.c b/src/launch.c
-index 339f3d8..2a1a788 100644
+index 425f6dc..1e48736 100644
 --- a/src/launch.c
 +++ b/src/launch.c
 @@ -56,6 +56,75 @@ static bool restore(struct saved_value *v)
@@ -78,7 +78,7 @@ index 339f3d8..2a1a788 100644
  static volatile LONG interrupted;
  static BOOL WINAPI on_control(DWORD control)
  {
-@@ -260,7 +329,12 @@ int sh_launch(HMODULE module, void *engine, void *client_user,
+@@ -270,7 +339,12 @@ int sh_launch(HMODULE module, void *engine, void *client_user,
      wchar_t session_flag[4] = {0};
      bool session_wait = !(GetEnvironmentVariableW(L"MADEIRA_DOCK_SESSION_WAIT", session_flag, 4) == 1 &&
                            session_flag[0] == L'0');
@@ -92,7 +92,7 @@ index 339f3d8..2a1a788 100644
      uint64_t wait_began = 0, retry_at = 0;
      unsigned retries = 0;
      int32_t logged_error = INT32_MIN;
-@@ -327,6 +401,10 @@ int sh_launch(HMODULE module, void *engine, void *client_user,
+@@ -339,6 +413,10 @@ int sh_launch(HMODULE module, void *engine, void *client_user,
                          if (!session_began) {
                              session_began = o->now_ms();
                              o->event("launch-session-wait", error);
@@ -103,7 +103,7 @@ index 339f3d8..2a1a788 100644
                          }
                          retry_at = o->now_ms() + SH_SESSION_RETRY_MS;
                          result_rejected = false;
-@@ -354,6 +432,20 @@ int sh_launch(HMODULE module, void *engine, void *client_user,
+@@ -366,6 +444,20 @@ int sh_launch(HMODULE module, void *engine, void *client_user,
                  break;
              }
          }
@@ -123,4 +123,4 @@ index 339f3d8..2a1a788 100644
 +        }
          if (retry_at && !seen_running && o->now_ms() >= retry_at) {
              retry_at = 0;
-             call = ((launch_fn)(*(void ***)manager)[2])(manager, &gameid, 0, 0, "");
+             call = ((launch_fn)(*(void ***)manager)[2])(manager, &gameid, launch_option, 0, "");

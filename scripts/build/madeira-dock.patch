@@ -1,11 +1,11 @@
 diff --git a/src/session.c b/src/session.c
-index 2047445..32549ec 100644
+index 0ecbb64..bc1f4e3 100644
 --- a/src/session.c
 +++ b/src/session.c
-@@ -131,6 +131,17 @@ int sh_session(HMODULE module, void *engine, const struct sh_api *api,
-     /* MADEIRA_DOCK_LIST_ENTITLEMENT=0: only the single-app query decides, as before. */
-     const char *list_setting = getenv("MADEIRA_DOCK_LIST_ENTITLEMENT");
-     bool use_list = !(list_setting && !strcmp(list_setting, "0"));
+@@ -234,6 +234,17 @@ int sh_session(HMODULE module, void *engine, const struct sh_api *api,
+     uint64_t begin = o->now_ms(), online_at = 0, last_probe = 0, last_list = 0, offline_since = 0;
+     bool was_online = false, offline_reported = false;
+     unsigned logged_callbacks = 0, online_callbacks = 0, blips = 0, lost = 0, connect_failures = 0;
 +    /* How long after sign-in before ownership is first asked. The answer is only
 +     * ever taken when it is yes, so asking early costs nothing: this used to be a
 +     * fixed 5 s in which a client that already had the licence list sat idle.
@@ -20,7 +20,7 @@ index 2047445..32549ec 100644
      result = 34;
      for (unsigned tick = 0; tick < 4500 && o->now_ms() - begin < 90000; ++tick) {
          for (unsigned batch = 0; batch < 64; ++batch) {
-@@ -184,7 +195,7 @@ int sh_session(HMODULE module, void *engine, const struct sh_api *api,
+@@ -302,7 +313,7 @@ int sh_session(HMODULE module, void *engine, const struct sh_api *api,
          /* Allow the real licence/app-info callbacks to arrive after logon.
           * A true subscription is required; timeout never permits launch.
           */
@@ -29,7 +29,7 @@ index 2047445..32549ec 100644
              bool entitled = ((subscribed_fn)v[181])(client_user, (uint32_t)app);
              if (!entitled && now - last_probe >= 10000) {
                  /* Not yet, every 10 s: how many apps the account's licences give the
-@@ -207,7 +218,7 @@ int sh_session(HMODULE module, void *engine, const struct sh_api *api,
+@@ -325,7 +336,7 @@ int sh_session(HMODULE module, void *engine, const struct sh_api *api,
               * whole time. Unless MADEIRA_DOCK_LIST_ENTITLEMENT=0, an app in that
               * list counts as owned (once a second while the query says no); the
               * client's own launch path still decides for itself. */

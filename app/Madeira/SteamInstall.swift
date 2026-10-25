@@ -37,6 +37,21 @@ enum SteamInstallFiles {
         return state["buildid"]?.string.flatMap { Int($0) }
     }
 
+    /// The language the install record states (`UserConfig.language`), or nil.
+    static func language(appID: Int, steamApps: URL) -> String? {
+        guard let state = record(appID: appID, steamApps: steamApps),
+              let language = state["UserConfig"]?["language"]?.string, !language.isEmpty else { return nil }
+        return language.lowercased()
+    }
+
+    /// The depots the install record holds: its own (`InstalledDepots`) and
+    /// those shared from other apps (`SharedDepots`).
+    static func depots(appID: Int, steamApps: URL) -> Set<Int> {
+        guard let state = record(appID: appID, steamApps: steamApps) else { return [] }
+        let keys = Array((state["InstalledDepots"]?.fields ?? [:]).keys) + Array((state["SharedDepots"]?.fields ?? [:]).keys)
+        return Set(keys.prefix(512).compactMap { Int($0) })
+    }
+
     /// The install size the record states (`SizeOnDisk`, bytes), or nil.
     static func sizeOnDisk(appID: Int, steamApps: URL) -> Int64? {
         guard let state = record(appID: appID, steamApps: steamApps),
@@ -57,12 +72,18 @@ enum SteamInstallFiles {
         }
         let recordURL = steamApps.appendingPathComponent("appmanifest_\(appID).acf")
         if let state = record(appID: appID, steamApps: steamApps) {
-            for (_, owner) in (state["SharedDepots"]?.fields ?? [:]).sorted(by: { $0.key < $1.key }).prefix(64) {
+            let shared = (state["SharedDepots"]?.fields ?? [:]).sorted(by: { $0.key < $1.key }).prefix(64)
+            for (_, owner) in shared {
                 guard let ownerID = owner.string.flatMap({ Int($0) }), ownerID > 0, ownerID != appID,
                       let ownerState = record(appID: ownerID, steamApps: steamApps),
-                      let dir = ownerState["installdir"]?.string,
-                      safeFolderName(dir).caseInsensitiveCompare(safeFolderName(folderName)) == .orderedSame
+                      let dir = ownerState["installdir"]?.string
                 else { continue }
+                // An owner in another folder (its own installdir) goes too when
+                // it holds nothing but depots shared into this app.
+                let mine = Set(shared.filter { $0.value.string == owner.string }.map { $0.key })
+                let held = Set((ownerState["InstalledDepots"]?.fields ?? [:]).keys)
+                guard safeFolderName(dir).caseInsensitiveCompare(safeFolderName(folderName)) == .orderedSame ||
+                      held.isSubset(of: mine) else { continue }
                 try? fm.removeItem(at: steamApps.appendingPathComponent("appmanifest_\(ownerID).acf"))
             }
         }

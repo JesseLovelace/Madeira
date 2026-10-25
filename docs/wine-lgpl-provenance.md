@@ -109,3 +109,15 @@ signed off under the DCO (the fork's `CONTRIBUTING.md`):
   performance counter (f2f3e4b42e4, pull request #23, merged as 84b25d3847c);
   ntdll ARM64EC: unwind data for x64 code running at a fixed base below 4 GB
   (f4bbccf9499, pull request #24, merged as 0bfd4a09b47).
+- 2026-10-05 author meshoklv: ntdll: load the builtin XInput even when the
+  game ships its own copy (30efeaa807b, pull request #19, merged as
+  4dbaf6bd7d6). Pull request #18 (b7996f867cb) is the same fix as pull
+  request #22 and was submitted first; recorded as merged (cdd29c7dee3) with
+  no change of its own, since #22's identical line was already in.
+- 2026-10-06 author bahacan16: xinput1_3 iOS: send XInputSetState motors to the
+  host pad (67b8c8bed51, pull request #20, squashed; recorded as merged by
+  4d30258eb82).
+- 2026-10-06 author spitefulowl: mscoree iOS: cooperative thread suspend and
+  keep-delegates for Wine Mono (000cac48452, pull request #26, merged as
+  2790f7c2a5d); Madeira's follow-up bfa3a472397 builds it for i386 only and
+  puts the variables back once Mono has read them.

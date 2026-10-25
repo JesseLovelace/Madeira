@@ -47,7 +47,7 @@ for name, text in [('MadeiraDock.swift', dock), ('MadeiraDockView.swift', view),
                     f'{name}: no credential or path in "{line.strip()[:60]}"')
 require('SteamSignIn.flag("MADEIRA_DOCK_COMPACT_POOL", default: false)' in view, 'compact pool is off unless opted in')
 pool = content.index('let dockLaunch = MadeiraDock.takeLaunchRequest()')
-require(pool < content.index('if let txt = MadeiraConfig.get("pool")', pool), 'madeira.cfg pool is applied after the Dock policy (explicit wins)')
+require(pool < content.index('if let txt = gamePool ?? MadeiraConfig.get("pool")', pool), 'madeira.cfg pool is applied after the Dock policy (explicit wins)')
 require('DockPerformancePolicy.sessionPoolMB(standard: 896, dock: dockLaunch.dock, compact: dockLaunch.compact)' in content,
         'the standard 896 MB pool is unchanged outside a compact Dock launch')
 require(content.count('MadeiraDock.requestLaunch(') == 1, 'only the Dock launch requests the Dock pool policy')
@@ -83,7 +83,11 @@ if git.returncode == 0:
                               'app/Madeira/arm64ec-windows/dock-notices.txt'], capture_output=True, text=True).stdout.strip()
     require(tracked == '', 'no built Dock executable or notices are tracked')
     gitlink = subprocess.run(['git', '-C', str(root), 'ls-files', '-s', 'madeira-dock'], capture_output=True, text=True).stdout
-    require(gitlink.startswith('160000 0c5bbd1a854c4c63c47e074b72954aba5b36919d'), 'madeira-dock is pinned at 0c5bbd1')
+    fields = gitlink.split()
+    dock_head = subprocess.run(['git', '-C', str(root / 'madeira-dock'), 'rev-parse', 'HEAD'],
+                               capture_output=True, text=True)
+    require(len(fields) >= 2 and fields[0] == '160000' and dock_head.returncode == 0 and
+            fields[1] == dock_head.stdout.strip(), 'madeira-dock matches the revision pinned by Madeira')
 else:
     print('SKIP: not a usable git checkout here; tracked-binary and submodule-pin checks not run')
 
@@ -93,7 +97,11 @@ body = (dock[dock.index('enum MadeiraDock {'):dock.index('    @MainActor private
         dock[dock.index("    /// The host's environment for one launch."):])
 stubs = r'''
 import Foundation
+#if canImport(Glibc)
 import Glibc
+#else
+import Darwin
+#endif
 enum SteamSignIn {
     static func flag(_ name: String, default fallback: Bool) -> Bool { getenv(name).map { String(cString: $0) != "0" } ?? fallback }
 }
@@ -105,7 +113,11 @@ enum SteamRuntimeFiles {
 '''
 checks = r'''
 import Foundation
+#if canImport(Glibc)
 import Glibc
+#else
+import Darwin
+#endif
 var failures = 0
 func require(_ condition: @autoclosure () -> Bool, _ label: String) {
     if condition() { print("PASS: " + label) } else { print("FAIL: " + label); failures += 1 }
@@ -169,6 +181,22 @@ func jwt(_ claims: String) -> String {
         require(found.map(\.id) == [10, 30, 20], "games from both C: libraries, sorted by name, invalid and duplicate skipped (\(found.map(\.id)))")
         require(found.first { $0.id == 30 }!.library == "Other/Lib/steamapps", "a game keeps its own library")
 
+        // Shared depots: an app that only lends depots to another install has nothing to
+        // start and is left out; one that lends depots but has its own installed stays.
+        let sharedDrive = drive.deletingLastPathComponent().appendingPathComponent("shared/drive_c")
+        let sharedApps = sharedDrive.appendingPathComponent("Program Files (x86)/Steam/steamapps")
+        try write(sharedApps.appendingPathComponent("appmanifest_40.acf"),
+                  "\"AppState\" { \"appid\" \"40\" \"name\" \"Episode\" \"installdir\" \"E\" \"StateFlags\" \"4\" " +
+                  "\"InstalledDepots\" { \"401\" { \"manifest\" \"1\" } } \"SharedDepots\" { \"501\" \"50\" \"601\" \"60\" } }")
+        try write(sharedApps.appendingPathComponent("appmanifest_50.acf"),
+                  "\"AppState\" { \"appid\" \"50\" \"name\" \"Lender\" \"installdir\" \"L\" \"StateFlags\" \"4\" " +
+                  "\"InstalledDepots\" { \"501\" { \"manifest\" \"2\" } } }")
+        try write(sharedApps.appendingPathComponent("appmanifest_60.acf"),
+                  "\"AppState\" { \"appid\" \"60\" \"name\" \"Base\" \"installdir\" \"B\" \"StateFlags\" \"4\" " +
+                  "\"InstalledDepots\" { \"601\" { \"manifest\" \"3\" } \"602\" { \"manifest\" \"4\" } } }")
+        let sharedFound = MadeiraDock.games(drive: sharedDrive).map(\.id)
+        require(sharedFound == [60, 40], "a lend-only owner is left out, a base game with its own depots stays (\(sharedFound))")
+
         // Validation.
         let alpha = found[0]
         func refused(_ run: () throws -> Void, _ text: String) -> Bool {
@@ -201,6 +229,10 @@ func jwt(_ claims: String) -> String {
         require((try? MadeiraDock.subject("opaque")) == nil && (try? MadeiraDock.subject(jwt(#"{"sub":"x"}"#))) == nil, "no usable subject: refused")
 
         // Host environment and launch.
+        MadeiraDock.configure(alpha, launchOption: 7)
+        require(env("MADEIRA_STEAM_HOST_LAUNCH_OPTION") == "7", "the original launch entry key reaches the host")
+        MadeiraDock.configure(alpha, launchOption: 0)
+        require(env("MADEIRA_STEAM_HOST_LAUNCH_OPTION") == "0", "a later launch replaces the previous option")
         setenv("MADEIRA_STEAM_HOST_ACCOUNT", "stale", 1); setenv("MADEIRA_STEAM_HOST_STEAMID", "1", 1)
         MadeiraDock.configure(game)
         require(["MADEIRA_STEAM_HOST_PROBE", "MADEIRA_STEAM_HOST_SESSION", "MADEIRA_STEAM_HOST_LOGIN", "MADEIRA_STEAM_HOST_LAUNCH"].allSatisfy { env($0) == "1" }, "host gates on")
@@ -236,7 +268,11 @@ func jwt(_ claims: String) -> String {
 with tempfile.TemporaryDirectory(prefix='madeira-dock-contract-') as tmp:
     tmp = Path(tmp)
     (tmp / 'stubs.swift').write_text(stubs + head)
-    (tmp / 'dock.swift').write_text('import Foundation\nimport Glibc\n' + body)
+    (tmp / 'dock.swift').write_text(('import Foundation\n#if canImport(Glibc)\nimport Glibc\n#else\nimport Darwin\n#endif\n'
+        '#if canImport(Network)\nimport Network\n#else\n'
+        '/* Linux: no Network framework; DockOffline only needs these names. */\n'
+        'final class NWPathMonitor { struct Path { enum Status { case satisfied, unsatisfied, requiresConnection }; '
+        'var status = Status.satisfied }; var currentPath = Path(); func start(queue: DispatchQueue) {} }\n#endif\n') + body)
     (tmp / 'checks.swift').write_text(checks)
     exe = tmp / 'check'
     build = subprocess.run([SWIFTC, '-parse-as-library', '-swift-version', '5', '-sanitize=address', '-o', str(exe),

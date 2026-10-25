@@ -22,6 +22,7 @@
 		A1000601 /* SteamOwnedLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000601 /* SteamOwnedLibrary.swift */; };
 		A1000700 /* SteamCloud.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000700 /* SteamCloud.swift */; };
 		A1000710 /* SavesAndShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000710 /* SavesAndShortcuts.swift */; };
+		A1000711 /* WineMono.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000711 /* WineMono.swift */; };
 		A1000602 /* SteamDownloadBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000602 /* SteamDownloadBackground.swift */; };
 		A1000600 /* SteamInstall.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000600 /* SteamInstall.swift */; };
 		A1000609 /* SwiftSteam/Content/ContentDecryptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000609 /* ContentDecryptor.swift */; };
@@ -43,6 +44,7 @@
 		A1000522 /* SteamKeyValues.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000522 /* SteamKeyValues.swift */; };
 		A1000523 /* SteamRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000523 /* SteamRuntime.swift */; };
 		A1000524 /* DockInstallers.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000524 /* DockInstallers.swift */; };
+		A1000913 /* DockReset.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000913 /* DockReset.swift */; };
 		A1000510 /* SwiftSteam/SteamSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000510 /* SteamSignIn.swift */; };
 		A1000511 /* SwiftSteam/SteamSignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000511 /* SteamSignInView.swift */; };
 		A1000512 /* SwiftSteam/Auth/SteamAuthAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000512 /* SteamAuthAPI.swift */; };
@@ -102,6 +104,7 @@
 		A1000615 /* liblzma.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000615 /* liblzma.tbd */; };
 		A1000060 /* libwin32u_unix.a in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000060 /* libwin32u_unix.a */; };
 		A1000070 /* Winios/Winios.m in Sources */ = {isa = PBXBuildFile; fileRef = A2000070 /* Winios/Winios.m */; };
+		A1000247 /* PadOutput.m in Sources */ = {isa = PBXBuildFile; fileRef = A2000247 /* PadOutput.m */; };
 		A1000080 /* arm64ec-windows in Resources */ = {isa = PBXBuildFile; fileRef = A2000080 /* arm64ec-windows */; };
 		A1000210 /* i386-windows in Resources */ = {isa = PBXBuildFile; fileRef = A2000210 /* i386-windows */; };
 		A1000081 /* x86_64-vcruntime in Resources */ = {isa = PBXBuildFile; fileRef = A2000081 /* x86_64-vcruntime */; };
@@ -125,7 +128,29 @@
 		A1000200 /* LogPattern.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000200 /* LogPattern.swift */; };
 		A1000201 /* LogTail.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000201 /* LogTail.swift */; };
 		A1000202 /* FPSOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000202 /* FPSOverlay.swift */; };
+		A1000213 /* LibraryBCD.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000213 /* LibraryBCD.swift */; };
+		A1000914 /* LibraryPrefs.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000914 /* LibraryPrefs.swift */; };
+		A1000208 /* GameProfiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000208 /* GameProfiles.swift */; };
+		A1000911 /* GameRecommendations.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000911 /* GameRecommendations.swift */; };
+		A1000912 /* GameRecommendationsApply.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000912 /* GameRecommendationsApply.swift */; };
 		A1000400 /* Library.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000400 /* Library.swift */; };
+		A1000977 /* LibraryCoverSpot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000977 /* LibraryCoverSpot.swift */; };
+		A1000976 /* LibraryGridZoomStart.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000976 /* LibraryGridZoomStart.swift */; };
+		A1000975 /* LibraryGridZoomIdle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000975 /* LibraryGridZoomIdle.swift */; };
+		A1000974 /* LibraryGridZoomHaptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000974 /* LibraryGridZoomHaptics.swift */; };
+		A1000973 /* DeferredMainWork.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000973 /* DeferredMainWork.swift */; };
+		A1000972 /* InteractionFrameRate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000972 /* InteractionFrameRate.swift */; };
+		A1000970 /* LibraryGridZoomBlend.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000970 /* LibraryGridZoomBlend.swift */; };
+		A1000969 /* LibraryGridGlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000969 /* LibraryGridGlow.swift */; };
+		A1000968 /* LibraryGridCardCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000968 /* LibraryGridCardCell.swift */; };
+		A1000967 /* LibraryGridZoomStage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000967 /* LibraryGridZoomStage.swift */; };
+		A1000966 /* LibraryGridZoom.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000966 /* LibraryGridZoom.swift */; };
+		A1000965 /* LibraryGridPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000965 /* LibraryGridPage.swift */; };
+		A1000964 /* LibraryGridHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000964 /* LibraryGridHost.swift */; };
+		A1000963 /* LibraryCoverCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000963 /* LibraryCoverCache.swift */; };
+		A1000962 /* LibraryGridZoomScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000962 /* LibraryGridZoomScene.swift */; };
+		A1000961 /* LibraryGridZoomModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000961 /* LibraryGridZoomModel.swift */; };
+		A1000960 /* LibraryGridLevels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000960 /* LibraryGridLevels.swift */; };
 		A1000401 /* GuestDisplay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000401 /* GuestDisplay.swift */; };
 		A1000243 /* GamepadInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000243 /* GamepadInput.swift */; };
 		A1000260 /* PadKeyboardMouse.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000260 /* PadKeyboardMouse.swift */; };
@@ -133,6 +158,7 @@
 		A1000203 /* HardwareInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000203 /* HardwareInput.swift */; };
 		A1000281 /* Winios/WiniosCursor.c in Sources */ = {isa = PBXBuildFile; fileRef = A2000281 /* Winios/WiniosCursor.c */; };
 		A1000245 /* TouchGamepad.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000245 /* TouchGamepad.swift */; };
+		A1000F01 /* GestureZones.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000F01 /* GestureZones.swift */; };
 		A1000246 /* TouchControlPresets.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000246 /* TouchControlPresets.swift */; };
 /* End PBXBuildFile section */
 
@@ -186,6 +212,7 @@
 		A2000601 /* SteamOwnedLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SteamOwnedLibrary.swift"; sourceTree = "<group>"; };
 		A2000700 /* SteamCloud.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SteamCloud.swift"; sourceTree = "<group>"; };
 		A2000710 /* SavesAndShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SavesAndShortcuts.swift"; sourceTree = "<group>"; };
+		A2000711 /* WineMono.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WineMono.swift"; sourceTree = "<group>"; };
 		A2000602 /* SteamDownloadBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SteamDownloadBackground.swift"; sourceTree = "<group>"; };
 		A2000600 /* SteamInstall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SteamInstall.swift"; sourceTree = "<group>"; };
 		A2000609 /* ContentDecryptor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwiftSteam/Content/ContentDecryptor.swift"; sourceTree = "<group>"; };
@@ -210,6 +237,7 @@
 		A2000522 /* SteamKeyValues.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SteamKeyValues.swift"; sourceTree = "<group>"; };
 		A2000523 /* SteamRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SteamRuntime.swift"; sourceTree = "<group>"; };
 		A2000524 /* DockInstallers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DockInstallers.swift"; sourceTree = "<group>"; };
+		A2000913 /* DockReset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockReset.swift; sourceTree = "<group>"; };
 		A2000510 /* SteamSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwiftSteam/SteamSignIn.swift"; sourceTree = "<group>"; };
 		A2000511 /* SteamSignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwiftSteam/SteamSignInView.swift"; sourceTree = "<group>"; };
 		A2000512 /* SteamAuthAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SwiftSteam/Auth/SteamAuthAPI.swift"; sourceTree = "<group>"; };
@@ -281,6 +309,8 @@
 		A2000060 /* libwin32u_unix.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libwin32u_unix.a; sourceTree = "<group>"; };
 		A2000070 /* Winios/Winios.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = Winios/Winios.m; sourceTree = "<group>"; };
 		A2000071 /* Winios/Winios.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Winios/Winios.h; sourceTree = "<group>"; };
+		A2000247 /* PadOutput.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PadOutput.m; sourceTree = "<group>"; };
+		A2000248 /* PadOutput.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PadOutput.h; sourceTree = "<group>"; };
 		A2000080 /* arm64ec-windows */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "arm64ec-windows"; sourceTree = "<group>"; };
 		A2000210 /* i386-windows */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "i386-windows"; sourceTree = "<group>"; };
 		A2000081 /* x86_64-vcruntime */ = {isa = PBXFileReference; lastKnownFileType = folder; path = "x86_64-vcruntime"; sourceTree = "<group>"; };
@@ -304,7 +334,29 @@
 		A2000200 /* LogPattern.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogPattern.swift; sourceTree = "<group>"; };
 		A2000201 /* LogTail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogTail.swift; sourceTree = "<group>"; };
 		A2000202 /* FPSOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FPSOverlay.swift; sourceTree = "<group>"; };
+		A2000213 /* LibraryBCD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryBCD.swift; sourceTree = "<group>"; };
+		A2000914 /* LibraryPrefs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryPrefs.swift; sourceTree = "<group>"; };
+		A2000208 /* GameProfiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameProfiles.swift; sourceTree = "<group>"; };
+		A2000911 /* GameRecommendations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameRecommendations.swift; sourceTree = "<group>"; };
+		A2000912 /* GameRecommendationsApply.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameRecommendationsApply.swift; sourceTree = "<group>"; };
 		A2000400 /* Library.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Library.swift; sourceTree = "<group>"; };
+		A2000977 /* LibraryCoverSpot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LibraryCoverSpot.swift"; sourceTree = "<group>"; };
+		A2000976 /* LibraryGridZoomStart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LibraryGridZoomStart.swift"; sourceTree = "<group>"; };
+		A2000975 /* LibraryGridZoomIdle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LibraryGridZoomIdle.swift"; sourceTree = "<group>"; };
+		A2000974 /* LibraryGridZoomHaptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LibraryGridZoomHaptics.swift"; sourceTree = "<group>"; };
+		A2000973 /* DeferredMainWork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DeferredMainWork.swift"; sourceTree = "<group>"; };
+		A2000972 /* InteractionFrameRate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "InteractionFrameRate.swift"; sourceTree = "<group>"; };
+		A2000970 /* LibraryGridZoomBlend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LibraryGridZoomBlend.swift"; sourceTree = "<group>"; };
+		A2000969 /* LibraryGridGlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LibraryGridGlow.swift"; sourceTree = "<group>"; };
+		A2000968 /* LibraryGridCardCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LibraryGridCardCell.swift"; sourceTree = "<group>"; };
+		A2000967 /* LibraryGridZoomStage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LibraryGridZoomStage.swift"; sourceTree = "<group>"; };
+		A2000966 /* LibraryGridZoom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LibraryGridZoom.swift"; sourceTree = "<group>"; };
+		A2000965 /* LibraryGridPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LibraryGridPage.swift"; sourceTree = "<group>"; };
+		A2000964 /* LibraryGridHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LibraryGridHost.swift"; sourceTree = "<group>"; };
+		A2000963 /* LibraryCoverCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LibraryCoverCache.swift"; sourceTree = "<group>"; };
+		A2000962 /* LibraryGridZoomScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LibraryGridZoomScene.swift"; sourceTree = "<group>"; };
+		A2000961 /* LibraryGridZoomModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LibraryGridZoomModel.swift"; sourceTree = "<group>"; };
+		A2000960 /* LibraryGridLevels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LibraryGridLevels.swift"; sourceTree = "<group>"; };
 		A2000401 /* GuestDisplay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestDisplay.swift; sourceTree = "<group>"; };
 		A2000243 /* GamepadInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "GamepadInput.swift"; sourceTree = "<group>"; };
 		A2000260 /* PadKeyboardMouse.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PadKeyboardMouse.swift"; sourceTree = "<group>"; };
@@ -312,6 +364,7 @@
 		A2000203 /* HardwareInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HardwareInput.swift; sourceTree = "<group>"; };
 		A2000281 /* Winios/WiniosCursor.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = "Winios/WiniosCursor.c"; sourceTree = "<group>"; };
 		A2000245 /* TouchGamepad.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TouchGamepad.swift; sourceTree = "<group>"; };
+		A2000F01 /* GestureZones.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GestureZones.swift; sourceTree = "<group>"; };
 		A2000246 /* TouchControlPresets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TouchControlPresets.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -396,6 +449,7 @@
 				A2000601 /* SteamOwnedLibrary.swift */,
 				A2000700 /* SteamCloud.swift */,
 				A2000710 /* SavesAndShortcuts.swift */,
+				A2000711 /* WineMono.swift */,
 				A2000602 /* SteamDownloadBackground.swift */,
 				A2000600 /* SteamInstall.swift */,
 				A2000609 /* ContentDecryptor.swift */,
@@ -420,6 +474,7 @@
 				A2000522 /* SteamKeyValues.swift */,
 				A2000523 /* SteamRuntime.swift */,
 				A2000524 /* DockInstallers.swift */,
+				A2000913 /* DockReset.swift */,
 				A2000510 /* SteamSignIn.swift */,
 				A2000511 /* SteamSignInView.swift */,
 				A2000512 /* SteamAuthAPI.swift */,
@@ -432,6 +487,7 @@
 				A2000519 /* SteamLog.swift */,
 				A2000001 /* MadeiraApp.swift */,
 				A2000245 /* TouchGamepad.swift */,
+				A2000F01 /* GestureZones.swift */,
 				A2000246 /* TouchControlPresets.swift */,
 				A2000244 /* Winios/WiniosGamepad.c */,
 				A2000203 /* HardwareInput.swift */,
@@ -444,7 +500,29 @@
 				A2000200 /* LogPattern.swift */,
 				A2000201 /* LogTail.swift */,
 				A2000202 /* FPSOverlay.swift */,
+				A2000213 /* LibraryBCD.swift */,
+				A2000914 /* LibraryPrefs.swift */,
+				A2000208 /* GameProfiles.swift */,
+				A2000911 /* GameRecommendations.swift */,
+				A2000912 /* GameRecommendationsApply.swift */,
 				A2000400 /* Library.swift */,
+				A2000977 /* LibraryCoverSpot.swift */,
+				A2000976 /* LibraryGridZoomStart.swift */,
+				A2000975 /* LibraryGridZoomIdle.swift */,
+				A2000974 /* LibraryGridZoomHaptics.swift */,
+				A2000973 /* DeferredMainWork.swift */,
+				A2000972 /* InteractionFrameRate.swift */,
+				A2000970 /* LibraryGridZoomBlend.swift */,
+				A2000969 /* LibraryGridGlow.swift */,
+				A2000968 /* LibraryGridCardCell.swift */,
+				A2000967 /* LibraryGridZoomStage.swift */,
+				A2000966 /* LibraryGridZoom.swift */,
+				A2000965 /* LibraryGridPage.swift */,
+				A2000964 /* LibraryGridHost.swift */,
+				A2000963 /* LibraryCoverCache.swift */,
+				A2000962 /* LibraryGridZoomScene.swift */,
+				A2000961 /* LibraryGridZoomModel.swift */,
+				A2000960 /* LibraryGridLevels.swift */,
 				A2000401 /* GuestDisplay.swift */,
 				A2000004 /* JITAllocator.c */,
 				A2000005 /* JITAllocator.h */,
@@ -480,6 +558,8 @@
 				A2000056 /* IOSDisplayShim.h */,
 				A2000070 /* Winios/Winios.m */,
 				A2000071 /* Winios/Winios.h */,
+				A2000247 /* PadOutput.m */,
+				A2000248 /* PadOutput.h */,
 				A2000034 /* wine_stubs.c */,
 				A2000006 /* Madeira-Bridging-Header.h */,
 				A2000007 /* Madeira.entitlements */,
@@ -558,6 +638,7 @@
 				A3000002 /* Sources */,
 				A3000001 /* Frameworks */,
 				A3000003 /* Resources */,
+				A30000E2 /* Bundle Wine Mono */,
 				B3000003 /* Embed JIT Helper */,
 				B3000007 /* Embed StikJIT */,
 				A30000D1 /* Sign bundled dylibs */,
@@ -667,6 +748,21 @@
 			shellPath = /bin/sh;
 			shellScript = "# Licence texts bundled with the converter must match their sources (staged by\n# build/madeira-d3d12/fetch-converter.sh); stale copies fail the build.\nfor pair in COPYING:LICENSE-MADEIRA-GPL-3.0.txt LICENSE-EXCEPTION.md:LICENSE-MADEIRA-EXCEPTION.txt; do\n  src=\"$SRCROOT/../${pair%%:*}\"; dst=\"$CODESIGNING_FOLDER_PATH/licenses/${pair##*:}\"\n  if [ ! -f \"$dst\" ] || ! cmp -s \"$src\" \"$dst\"; then echo \"error: bundled ${pair##*:} is missing or stale; run build/stage-licenses.sh\"; exit 1; fi\ndone\n# A loose dylib copied as a resource is sealed by the bundle\n# signature but is not itself re-signed, and dyld will not load code\n# whose own signature does not match. Sign it with whatever identity\n# this configuration resolved to, rather than hardcoding one.\nDYLIB=\"$CODESIGNING_FOLDER_PATH/d3d12/libmetalirconverter.dylib\"\n[ -f \"$DYLIB\" ] || exit 0\nif [ -n \"$EXPANDED_CODE_SIGN_IDENTITY\" ] && [ \"$CODE_SIGNING_ALLOWED\" != \"NO\" ]; then\n  codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --timestamp=none \"$DYLIB\"\nelse\n  codesign --force --sign - \"$DYLIB\"\nfi\n";
 		};
+		A30000E2 /* Bundle Wine Mono */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle Wine Mono";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\n# Copy Wine Mono into the app (build/wine-mono/bundle.sh; inputs from build/wine-mono/fetch.sh,\n# see docs/BUILDING.md). Without build/wine-mono/wine-mono-<ver> the app is built without Mono.\nbash \"$SRCROOT/../build/wine-mono/bundle.sh\" \"$CODESIGNING_FOLDER_PATH/wine-mono\"\n";
+		};
 		B3000007 /* Embed StikJIT */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -703,6 +799,7 @@
 				A1000601 /* SteamOwnedLibrary.swift in Sources */,
 				A1000700 /* SteamCloud.swift in Sources */,
 				A1000710 /* SavesAndShortcuts.swift in Sources */,
+				A1000711 /* WineMono.swift in Sources */,
 				A1000602 /* SteamDownloadBackground.swift in Sources */,
 				A1000600 /* SteamInstall.swift in Sources */,
 				A1000609 /* SwiftSteam/Content/ContentDecryptor.swift in Sources */,
@@ -724,6 +821,7 @@
 				A1000522 /* SteamKeyValues.swift in Sources */,
 				A1000523 /* SteamRuntime.swift in Sources */,
 				A1000524 /* DockInstallers.swift in Sources */,
+				A1000913 /* DockReset.swift in Sources */,
 				A1000510 /* SwiftSteam/SteamSignIn.swift in Sources */,
 				A1000511 /* SwiftSteam/SteamSignInView.swift in Sources */,
 				A1000512 /* SwiftSteam/Auth/SteamAuthAPI.swift in Sources */,
@@ -736,6 +834,7 @@
 				A1000519 /* SwiftSteam/Helpers/SteamLog.swift in Sources */,
 				A1000001 /* MadeiraApp.swift in Sources */,
 				A1000245 /* TouchGamepad.swift in Sources */,
+				A1000F01 /* GestureZones.swift in Sources */,
 				A1000246 /* TouchControlPresets.swift in Sources */,
 				A1000244 /* Winios/WiniosGamepad.c in Sources */,
 				A1000203 /* HardwareInput.swift in Sources */,
@@ -748,7 +847,29 @@
 				A1000200 /* LogPattern.swift in Sources */,
 				A1000201 /* LogTail.swift in Sources */,
 				A1000202 /* FPSOverlay.swift in Sources */,
+				A1000213 /* LibraryBCD.swift in Sources */,
+				A1000914 /* LibraryPrefs.swift in Sources */,
+				A1000208 /* GameProfiles.swift in Sources */,
+				A1000911 /* GameRecommendations.swift in Sources */,
+				A1000912 /* GameRecommendationsApply.swift in Sources */,
 				A1000400 /* Library.swift in Sources */,
+				A1000977 /* LibraryCoverSpot.swift in Sources */,
+				A1000976 /* LibraryGridZoomStart.swift in Sources */,
+				A1000975 /* LibraryGridZoomIdle.swift in Sources */,
+				A1000974 /* LibraryGridZoomHaptics.swift in Sources */,
+				A1000973 /* DeferredMainWork.swift in Sources */,
+				A1000972 /* InteractionFrameRate.swift in Sources */,
+				A1000970 /* LibraryGridZoomBlend.swift in Sources */,
+				A1000969 /* LibraryGridGlow.swift in Sources */,
+				A1000968 /* LibraryGridCardCell.swift in Sources */,
+				A1000967 /* LibraryGridZoomStage.swift in Sources */,
+				A1000966 /* LibraryGridZoom.swift in Sources */,
+				A1000965 /* LibraryGridPage.swift in Sources */,
+				A1000964 /* LibraryGridHost.swift in Sources */,
+				A1000963 /* LibraryCoverCache.swift in Sources */,
+				A1000962 /* LibraryGridZoomScene.swift in Sources */,
+				A1000961 /* LibraryGridZoomModel.swift in Sources */,
+				A1000960 /* LibraryGridLevels.swift in Sources */,
 				A1000401 /* GuestDisplay.swift in Sources */,
 				A1000004 /* JITAllocator.c in Sources */,
 				A1000005 /* EntitlementChecker.swift in Sources */,
@@ -759,6 +880,7 @@
 				A1000041 /* PrefixExtractor.c in Sources */,
 				A1000050 /* IOSDisplayShim.m in Sources */,
 				A1000070 /* Winios/Winios.m in Sources */,
+				A1000247 /* PadOutput.m in Sources */,
 				A1000035 /* StikJITHelper.swift in Sources */,
 				B1000001 /* JITSetup.swift in Sources */,
 				B1000050 /* JITNetwork.swift in Sources */,

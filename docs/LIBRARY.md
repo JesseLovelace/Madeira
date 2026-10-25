@@ -39,6 +39,14 @@ Removing an entry never removes the game's files or saves.
 
 - Layouts: cards, compact cards, list and compact list (one short row per
   game). Sort by last played, name, date added or folder size. Search by title.
+- Group by: **Platform** (the default) is the sections below. **Last played**
+  (Today, Past 7 days, Past 30 days, Earlier, Never played), **Installed**
+  (Installed, then Not installed) and **None** (one grid) list the games you
+  added and Steam's games together, each group in the Sort by order. A Steam
+  game counts as played when Madeira or Steam last started it, and as
+  installed while it downloads. Not installed Steam games are listed only while
+  signed in. Group titles collapse like the section titles, and each one's
+  state is remembered.
 - Sections, as in the fork's library: when Madeira Dock is available,
   **Steam** (the Steam games being downloaded and the games Steam has
   installed, with their count; a **Sign in to Steam** card when signed out),
@@ -87,24 +95,57 @@ Removing an entry never removes the game's files or saves.
 ## Game details
 
 Tapping a game opens its details page; it stays up until the session's
-starting screen takes over (or an error is shown). A profile holds:
+starting screen takes over (or an error is shown). The Desktop's page has every
+setting below as well; it leaves out only what names or starts one program (title
+and cover, Launch, launch arguments, the Home Screen link and the executable),
+and check-frontend fails if a setting is hidden from it. A profile holds:
 
 - title and cover image;
 - **Resolution**: the size of the Windows screen (the virtual monitor) the game
-  renders for: 640×480 to 2560×1440, plus **Screen shape**, this device's own
-  aspect ratio at 720 lines (for example 1560×720 on a 19.5:9 phone), so a game
-  fills the screen without bars. It is exported as the session default
-  (`MADEIRA_SCREEN_W/H`, `MADEIRA_SCREEN_SRC=knob`), which win32u reports for
-  the session. New entries use 1024×768, the size main uses for every launch;
+  renders for, chosen from this device's list (ml1172, `ResolutionChoices` in
+  `GuestDisplay.swift`; the developer interface's Resolution menu shows the
+  same list):
+  - **This screen's shape**, which fills the screen without bars: the screen's
+    aspect ratio at 944×656's pixel count (light), at 1280×720's (≈720p, the
+    **default**, so a 19.5:9 iPhone keeps the 1408×648 it always had and a
+    game's mode list is unchanged) and at 1920×1080's (≈1080p), sides rounded
+    to multiples of 8, then the screen's **native** pixels; a size past native
+    is left out. On an 11-inch iPad (1180×820 points): 944×656, 1152×800,
+    1728×1200, 2360×1640; on an iPhone 16 Pro Max: 1168×536, 1408×648,
+    2120×976, 2868×1320;
+  - **16:9 widescreen**: 960×540, 1280×720, 1600×900, 1920×1080, 2560×1440;
+  - **4:3 classic**: 640×480, 800×600, 1024×768, 1280×960.
+
+  Each PC group's title says whether it fills this screen or leaves bars
+  above and below or at the sides (in Fit). A saved size the list lacks (chosen
+  on another device) is shown as "saved". The choice is exported as the session
+  default (`MADEIRA_SCREEN_W/H`, `MADEIRA_SCREEN_SRC=knob`), which win32u
+  reports for the session. A program's own display-mode change
+  (ChangeDisplaySettings to a size win32u lists) resizes that monitor for the
+  rest of the session and the picture follows it;
+  `env.MADEIRA_VIRTUAL_MODE_SET = 0` keeps the chosen size. New entries, and
+  the Desktop entry, take the default. Upstream's fixed default, 1408×648, is
+  a 19.5:9 phone's shape; on a screen of another shape, entries saved with it
+  are reset once to the default (UserDefaults
+  `madeira.ml1172.resolution-reset`);
 - **Aspect & scaling**: how that screen is shown. **Fit** letterboxes it,
   **Fill** covers the screen and crops, **Stretch** fills it exactly, **Aspect**
   letterboxes the shape the game actually draws (its back buffer) and **Fill
   height** keeps that shape at full height. Touches are mapped through the same
   rectangle, so input lines up in every mode;
+- **MetalFX upscaling** (Off, 1.5× or 2×): the picture is
+  scaled up with MetalFX's spatial scaler before it reaches the screen, by the
+  D3D12 runtime's swapchain or DXMT's MetalFX swapchain for D3D11. It becomes
+  the game's `metalfx-upscale` line (see This game's config). With 1.5×,
+  Resolution also offers the screen's shape at 480 lines, which 1.5× brings to
+  720;
 - FPS limit: 60, the display maximum or uncapped (the same presentation
   pacing modes as the FPS pill in the developer interface), and 30 when DXMT
   has its 30 FPS cap (willfaust/dxmt#1; DXMT without it would present mode 3
-  uncapped, so the choice is hidden and a saved 30 runs as 60);
+  uncapped, so the choice is hidden and a saved 30 runs as 60), and 40 (mode 4)
+  when DXMT has its 40 FPS cap (`madeira_dxmt_has_40_cap`) and the panel reaches
+  120 Hz, which is held while it runs (25 ms is three 120 Hz refreshes but
+  rounds to 33 ms at 60 Hz); a saved 40 runs as 60 otherwise;
 - reduced-precision x87: off by default, as in FEX; only an explicit choice
   exports `FEX_X87REDUCEDPRECISION=1`;
 - **AVX and AVX2**: off by default, as in FEX's iOS build; only an explicit
@@ -120,7 +161,7 @@ starting screen takes over (or an error is shown). A profile holds:
 - **Frame generation (experimental)**, off by default: exports
   `MADEIRA_FRAMEGEN=1`, and DXMT's present path (D3D11 and D3D12 alike) shows a
   MetalFX-interpolated frame between every two game frames; FPS limits do not
-  apply while it is on. The Desktop's page has it too;
+  apply while it is on;
 - launch arguments (double-quoted tokens, at most 64 and 4 KB in total, the
   whole command included; not for Steam games, which start with Steam's own
   launch option, through Madeira Dock or as **The game**), in their own section
@@ -258,14 +299,16 @@ pairing (iOS 27, `docs/JIT.md`), Steam sign-in
 (`docs/STEAM_SIGNIN.md`) through `SteamSignInModel`/`SteamSignInView` (the
 token stays in sign-in's Keychain store), and Madeira Dock
 (`docs/MADEIRA_DOCK.md`) through
-`MadeiraDockModel.prepareClient()`/`MadeiraDockView`.
+`MadeiraDockModel.prepareClient()`/`MadeiraDockView`, and Wine Mono through
+`WineMonoModel` (`app/Madeira/WineMono.swift`, below).
 
 **First-run setup.** On a new install (and once after an update that raises
 the setup revision, below) the library opens a full-screen setup: welcome, **Install LocalDevVPN** (only when it is missing: every JIT way
 reaches the device through it; **Get LocalDevVPN** opens the App Store, and
 Madeira checks again with `canOpenURL` whenever it comes back to the front),
 **Set up JIT**, **Sign in to Steam**, **Prepare Madeira Dock**
-(Valve's client components, about 73 MB, only when Dock is available), done.
+(Valve's client components, about 73 MB, only when Dock is available),
+**Add .NET Framework support** (Wine Mono, only when the device has none), done.
 The JIT page offers three ways in, **In-app** (iOS 27 and later),
 **In-app with pairing file** and **StikDebug**, or **I'll do this later**.
 Each way opens numbered steps that tick off as they are done, with **Back to
@@ -277,8 +320,27 @@ the app. Setup opens on a new install, and once after an update whose
 `OnboardingRules.revision` is higher than the stored one; raise it in a release
 whose setup every existing install should see. Revision 2 (Install LocalDevVPN,
 in-app pairing, the Madeira JIT shortcut) also reopens setup for installs
-that finished it before revisions (`madeiraOnboardingDone`). The JIT page is always available; Steam pages follow their feature
+that finished it before revisions (`madeiraOnboardingDone`). After an update,
+setup shows only the pages added since the revision the device last saw
+(`Step.introduced`), under **New in Madeira**: revision 3 adds Wine Mono, so an
+install that finished revision 2 sees just that page, and nothing at all when
+it already has Wine Mono. A new install and **Run setup again** show every page.
+The JIT page is always available; Steam pages follow their feature
 switches. Setup never opens over a running session.
+
+**Wine Mono** (`app/Madeira/WineMono.swift`). Games built on .NET Framework
+start through Wine's mscoree, which needs Wine Mono at `C:\windows\mono\mono-2.0`.
+Release builds do not carry it; setup's Wine Mono page and **Settings › .NET
+Framework** download it from WineHQ (`wine-mono-<ver>-x86.tar.xz`, about 42 MB,
+pinned by SHA-256 in `build/wine-mono/pin.sh`), unpack it on the device with
+Apple's LZMA decoder and a small tar reader, without the compile-time
+`lib/mono/*-api` assemblies (about 135 MB installed), apply bundle.sh's ml1281
+mscorlib patch (both hashes checked), and install it in one rename to
+`Library/Application Support/WineMono/wine-mono`, excluded from backups. Each
+session links `C:\windows\mono\mono-2.0` to the bundled copy (a development
+build made after `build/wine-mono/fetch.sh`) or, failing that, to the download.
+Settings can remove it again. `tests/host/check-wine-mono.py` runs the installer
+code on the real tarball. Log tag: `[wine-mono]`.
 
 Setup starts no Wine session and allocates no JIT pool. It stores the selected
 JIT method and may store a validated pairing file (paired on the device or
@@ -289,8 +351,11 @@ verified download without Wine. It changes no engine switch or launch
 configuration.
 
 **Settings › JIT** and **Settings › Steam** both show **Run setup again**.
+**Settings › .NET Framework** shows Wine Mono's state, with **Download Wine
+Mono** or **Remove Wine Mono** (hidden in a build that carries it).
 Settings › Steam also shows the signed-in account with **Sign out of Steam**
-(or **Sign in to Steam**), **Madeira Dock** (Dock's sheet, with the last Dock
+(or **Sign in to Steam**), the **Steam Cloud saves** switch
+(`docs/STEAM_CLOUD.md`), **Madeira Dock** (Dock's sheet, with the last Dock
 result under it). A game started from the Dock sheet here runs as a library
 session: full-screen view, starting screen, in-game menu, and the
 one-session-per-run rule. That session is not added to the library.
@@ -348,7 +413,6 @@ menu owns input, the game sees a connected pad at rest.
 | `MADEIRA_RUNTIME_SETTINGS` | on | no Display and Memory & sync sections in Settings |
 | `MADEIRA_SESSION_TOOLS` | on | no Aspect & scaling (a session does not save it) and no Diagnostics in the in-game menu |
 | `MADEIRA_SESSION_DIAGNOSTICS` | off | `1` shows the in-game menu's Diagnostics: frame capture (render-target pixels to `Documents/capture`) and GPU sync, for Direct3D 12 games |
-| `MADEIRA_SCREEN_SHAPE_RESOLUTION` | on | no Screen shape resolution choice |
 | `MADEIRA_FRONTEND_KEYBOARD` | on | Keyboard opens the game view's own keyboard instead of the key window |
 | `MADEIRA_ONBOARDING` | on | first-run setup never opens, and Settings › JIT/Steam have no **Run setup again** |
 | `MADEIRA_LIBRARY_COLLAPSE` | on | the **Steam** and **Other games** titles do not collapse (**Not installed** still folds) |
@@ -359,11 +423,12 @@ Opt-in (`env.NAME = 1`), off by default:
 | Switch | `1` means |
 | --- | --- |
 | `MADEIRA_PROMOTE` | the display link also holds the panel at its maximum rate in the 60 FPS cap (Settings › Display) |
+| `MADEIRA_THERMAL_CAP` | while iOS reports the device as serious or critical, a session at the 60 cap, MAX or RAW runs at the 40 cap (30 where 40 is not offered) and returns to its own mode at nominal; a cap chosen during the session is kept. Logs `[thermal-cap]` |
 | `MADEIRA_DEVICE_STATS` | a `[device-load]` line (thermal state, low power, screen capture) every 10 s while Wine runs |
 
 Log tags: `[frontend]`, `[library]` (ml1163: each game's start mode, batch, services and working folder), `[display]`, `[display-shape]`, `[frontend-pointer]`, `[launch-view]`, `[startup-log]`, `[exit-report]`,
 `[session-once]`, `[library-surface]`, `[library-metadata]`, `[onboarding]`,
-`[frontend-controller]`, `[frontend-keyboard]`, `[device-load]`, `[promote]`.
+`[frontend-controller]`, `[frontend-keyboard]`, `[device-load]`, `[promote]`, `[thermal-cap]`.
 
 ## Tests
 

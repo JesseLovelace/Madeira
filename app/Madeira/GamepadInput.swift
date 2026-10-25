@@ -22,9 +22,16 @@ final class GamepadInput: @unchecked Sendable {
         return enabled && value != "0"
     }()
 
-    @MainActor func configureTouch(controls: Set<UUID>) {
+    @MainActor func configureTouch(controls: Set<UUID>, acceptingInput: Bool = true) {
         let allowed = Self.touchEnabled ? controls : []
-        queue.async { [self] in touchState.configure(allowed); sample() }
+        queue.async { [self] in
+            let wasConnected = touchState.connected, wasAccepting = touchState.acceptingInput
+            touchState.configure(allowed, acceptingInput: acceptingInput)
+            if wasConnected != touchState.connected || wasAccepting != touchState.acceptingInput {
+                LogStore.shared.log("[touch-xinput] connected=\(touchState.connected ? 1 : 0) accepting=\(acceptingInput ? 1 : 0) controls=\(allowed.count)")
+            }
+            sample()
+        }
     }
 
     /// Publish player 1 before the game looks (MADEIRA_PAD_EARLY_SLOT=1; default OFF).
@@ -63,11 +70,33 @@ final class GamepadInput: @unchecked Sendable {
     /// otherwise -- and leaves XInput. "dualsense" / "generic" force that
     /// identity. Read once, at session start (beginPadSession): the device
     /// exists before the game enumerates, so a change applies at the next start.
+    /// The game's own lines come first (MadeiraConfig.gameValue), so a game's
+    /// config or its recommended settings choose its mode.
     static let padModeKey = "env.MADEIRA_PAD_MODE"
     static func configuredPadMode() -> (value: String, source: String) {
+        if let v = MadeiraConfig.gameValue(padModeKey) { return (v.lowercased(), "game") }
         if let v = MadeiraConfig.get(padModeKey), !v.isEmpty { return (v.lowercased(), "cfg") }
         if let v = ProcessInfo.processInfo.environment["MADEIRA_PAD_MODE"], !v.isEmpty { return (v.lowercased(), "env") }
         return ("xinput", "default")
+    }
+
+    /// ml2106: what of a game's controller output reaches the physical pad
+    /// (app/Madeira/PadOutput.m): XInputSetState rumble on any XInput pad, and
+    /// the virtual DualSense's output reports (rumble, adaptive triggers,
+    /// lightbar, player LEDs) on player 1's pad. `env.MADEIRA_PAD_OUTPUT`:
+    /// unset or 1 both, 0 none, hid only the DualSense's, xinput only XInput rumble.
+    /// The game's own lines come first, as for the pad mode.
+    static func configuredPadOutput() -> (xinput: Bool, hid: Bool, value: String) {
+        let value = (MadeiraConfig.gameValue("env.MADEIRA_PAD_OUTPUT")
+            ?? MadeiraConfig.get("env.MADEIRA_PAD_OUTPUT")
+            ?? ProcessInfo.processInfo.environment["MADEIRA_PAD_OUTPUT"]
+            ?? "1").lowercased()
+        switch value {
+        case "0", "off", "none": return (false, false, value)
+        case "hid", "dualsense": return (false, true, value)
+        case "xinput": return (true, false, value)
+        default: return (true, true, value)
+        }
     }
 
     /// ml2100: decide this session's controller path. Called once, before the
@@ -76,15 +105,18 @@ final class GamepadInput: @unchecked Sendable {
     /// registry entries. In XInput mode it only unsets that and logs.
     @MainActor func beginPadSession() {
         let mode = Self.configuredPadMode()
+        let output = Self.configuredPadOutput()
         unsetenv("MADEIRA_HIDPAD"); unsetenv("MADEIRA_HIDPAD_NAME")
         // An earlier session in this app run may have taken player 1 off XInput.
         queue.async { [self] in hidActive = false; hidKeepsXInput = false }
         guard ["hid", "dualsense", "generic"].contains(mode.value) else {
             LogStore.shared.log("[hid-pad] ml2100 session mode=xinput source=\(mode.source)")
+            beginPadOutput(xinput: output.xinput && Self.enabled, hid: false, value: output.value)
             return
         }
         guard Self.enabled else {
             LogStore.shared.log("[hid-pad] ml2100 session mode=\(mode.value) ignored: MADEIRA_XINPUT=0 turns every controller off")
+            beginPadOutput(xinput: false, hid: false, value: output.value)
             return
         }
         // Player 1 is the first paired extended gamepad, as refreshControllers assigns slots.
@@ -102,6 +134,16 @@ final class GamepadInput: @unchecked Sendable {
         queue.async { [self] in hidActive = true; hidKeepsXInput = keepXInput; sample() }
         LogStore.shared.log("[hid-pad] ml2100 session mode=\(mode.value) source=\(mode.source) kind=\(kind) "
                             + "pad=\(first?.productCategory ?? "none") xinput-slot0=\(keepXInput ? "kept" : "off")")
+        // Only the DualSense identity has output reports (the generic pad has none).
+        beginPadOutput(xinput: output.xinput, hid: output.hid && kind == "dualsense", value: output.value)
+    }
+
+    /// ml2106: arm PadOutput.m for this session. Before the wineserver starts,
+    /// so XInputGetCapabilities already reports motors when rumble is on.
+    @MainActor private func beginPadOutput(xinput: Bool, hid: Bool, value: String) {
+        madeira_pad_output_configure(xinput ? 1 : 0, hid ? 1 : 0)
+        LogStore.shared.log("[hidpad-out] ml2106 session env.MADEIRA_PAD_OUTPUT=\(value) "
+                            + "xinput-rumble=\(xinput ? 1 : 0) dualsense-output=\(hid ? 1 : 0)")
     }
 
     /// Documents/madeira.cfg `env.NAME`, else the process environment; only "0" disables.
@@ -207,6 +249,9 @@ final class GamepadInput: @unchecked Sendable {
                 profiles[i]?.valueChangedHandler = nil
                 controllers[i] = nil
                 profiles[i] = nil
+                // ml2106: a game's "motors off" for a pad that left is dropped (the
+                // slot reads disconnected), so the slot's motors end here.
+                winios_gamepad_set_vibration(Int32(i), 0, 0)
                 fputs("[xinput] ml1920 slot=\(i) disconnected\n", stderr)
             }
             for (controller, profile) in live {
@@ -214,6 +259,9 @@ final class GamepadInput: @unchecked Sendable {
                       let i = controllers.firstIndex(where: { $0 == nil }) else { continue }
                 controllers[i] = controller
                 profiles[i] = profile
+                // A pad joining a slot starts still, before sample() publishes it,
+                // rather than replaying the level the slot had before.
+                winios_gamepad_set_vibration(Int32(i), 0, 0)
                 profile.valueChangedHandler = { [weak self] _, _ in
                     // Explicit queue hop also serializes callbacks already in flight
                     // when a controller is disconnected or the app resigns active.
@@ -221,12 +269,18 @@ final class GamepadInput: @unchecked Sendable {
                 }
                 fputs("[xinput] ml1920 slot=\(i) connected\n", stderr)
             }
+            // ml2106: the pad in each slot is where that slot's rumble plays
+            // (and slot 0's the DualSense output); unchanged slots are no-ops.
+            for i in controllers.indices { madeira_pad_output_set_slot(Int32(i), controllers[i]) }
             updateTimer()
             sample()
         }
     }
 
     private func setActive(_ value: Bool) {
+        // ml2106: motors stop and adaptive triggers go off while the app is
+        // inactive; the game's last state comes back with it.
+        madeira_pad_output_set_active(value ? 1 : 0)
         queue.async { [self] in
             active = value
             if !value {
