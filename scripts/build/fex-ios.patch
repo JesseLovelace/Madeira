@@ -10,11 +10,3 @@ index 72bd99e..1cf0051 100644
  }
  #include <condition_variable>
  #include <fcntl.h>
-@@ -1491,6 +1492,7 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
-    * reached via its x64 fast-forward sequence -- preserves the x4/x5 varargs contract that
-    * the emulation round trip destroys; see Module.S). Same change-detection pattern as
-    * [cb-entry] below: CompileBlock runs often enough to notice promptly. */
-+#ifdef FEX_IOS_HOST
-   {
-     static uint64_t FfsLastCount = 0;
-     static uint32_t FfsReports = 0;
