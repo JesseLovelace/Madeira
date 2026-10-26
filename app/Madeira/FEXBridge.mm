@@ -13,6 +13,7 @@
 #include <FEXCore/Config/Config.h>
 #include <FEXCore/Core/Context.h>
 #include <FEXCore/Core/CoreState.h>
+#include <FEXCore/Core/X86Enums.h>
 #include <FEXCore/Debug/InternalThreadState.h>
 #include <FEXCore/Core/HostFeatures.h>
 #include <FEXCore/Core/SignalDelegator.h>
@@ -220,13 +221,25 @@ static bool g_exit_jmp_set = false;
 // ---------------------------------------------------------------------------
 class iOSSyscallHandler : public FEXCore::HLE::SyscallHandler {
 public:
-    iOSSyscallHandler() {
-        OSABI = FEXCore::HLE::SyscallOSABI::OS_LINUX64;
-    }
+    iOSSyscallHandler() = default;
 
     static std::atomic<int> syscall_count;
 
-    uint64_t HandleSyscall(FEXCore::Core::CpuStateFrame *Frame, FEXCore::HLE::SyscallArguments *Args) override {
+    // FEXCore no longer marshals syscall arguments: read them from the frame, write the result to
+    // RAX and step past the 2-byte `syscall` (the syscall now ends its block).
+    struct SyscallArgs {
+        uint64_t Argument[4];
+    };
+
+    void HandleSyscall(FEXCore::Core::CpuStateFrame *Frame) override {
+        auto &G = Frame->State.gregs;
+        SyscallArgs A {{G[FEXCore::X86State::REG_RAX], G[FEXCore::X86State::REG_RDI], G[FEXCore::X86State::REG_RSI],
+                        G[FEXCore::X86State::REG_RDX]}};
+        G[FEXCore::X86State::REG_RAX] = HandleSyscallImpl(Frame, &A);
+        Frame->State.rip += 2;
+    }
+
+    uint64_t HandleSyscallImpl(FEXCore::Core::CpuStateFrame *Frame, SyscallArgs *Args) {
         syscall_count.fetch_add(1);
         // Args[0] = RAX (syscall number), Args[1] = RDI, Args[2] = RSI, Args[3] = RDX, ...
         uint64_t SyscallNum = Args->Argument[0];
@@ -430,8 +443,6 @@ bool fex_initialize(void) {
     // Step 5: Create HostFeatures for Apple A15 (iPhone 13 Pro)
     fex_log("  Creating HostFeatures...");
     FEXCore::HostFeatures Features{};
-    Features.DCacheLineSize = 64;
-    Features.ICacheLineSize = 64;
     Features.SupportsCacheMaintenanceOps = true;
     Features.SupportsAES = true;
     Features.SupportsCRC = true;
@@ -668,7 +679,11 @@ int64_t fex_test_execute(void) {
     fex_log("Creating FEX thread (RIP=0x%llx, RSP=0x%llx)...",
             (unsigned long long)code_addr, (unsigned long long)stack_addr);
 
-    auto *Thread = g_ctx->CreateThread(code_addr, stack_addr);
+    auto *Thread = g_ctx->CreateThread();
+    if (Thread) {
+        Thread->CurrentFrame->State.rip = code_addr;
+        Thread->CurrentFrame->State.gregs[FEXCore::X86State::REG_RSP] = stack_addr;
+    }
     if (!Thread) {
         fex_log("FAIL: CreateThread returned null");
         for (int i = 0; i < num_mapped; i++) ::munmap(mapped_regions[i].addr, mapped_regions[i].size);
